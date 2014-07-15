@@ -2,7 +2,7 @@
 '''
 Archive states.
 
-.. versionadded:: 2014.1.0 (Hydrogen)
+.. versionadded:: 2014.1.0
 '''
 
 import logging
@@ -21,7 +21,7 @@ def extracted(name,
               if_missing=None,
               keep=False):
     '''
-    .. versionadded:: 2014.1.0 (Hydrogen)
+    .. versionadded:: 2014.1.0
 
     State that make sure an archive is extracted in a directory.
     The downloaded archive is erased if successfully extracted.
@@ -70,7 +70,7 @@ def extracted(name,
         tar, zip or rar
 
     if_missing
-        Some archive, such as tar, extract themself in a subfolder.
+        Some archives, such as tar, extract themselves in a subfolder.
         This directive can be used to validate if the archive had been
         previously extracted.
 
@@ -83,6 +83,9 @@ def extracted(name,
         **shoult not be used** here.
         If this option is not set, then the Python tarfile module is used.
         The tarfile module supports gzip and bz2 in Python 2.
+
+    keep
+        Keep the archive in the minion's cache
     '''
     ret = {'name': name, 'result': None, 'changes': {}, 'comment': ''}
     valid_archives = ('tar', 'rar', 'zip')
@@ -158,7 +161,7 @@ def extracted(name,
         else:
             log.debug('Untar {0} in {1}'.format(filename, name))
 
-            results = __salt__['cmd.run_all']('tar {0} -f "{1}"'.format(
+            results = __salt__['cmd.run_all']('tar {0} -f {1!r}'.format(
                 tar_options, filename), cwd=name)
             if results['retcode'] != 0:
                 ret['result'] = False

@@ -89,14 +89,14 @@ def update(clear=False):
                 old.update(data)
                 data = old
         return __salt__['data.update']('mine_cache', data)
-    auth = _auth()
     load = {
             'cmd': '_mine',
             'data': data,
             'id': __opts__['id'],
             'clear': clear,
-            'tok': auth.gen_token('salt'),
     }
+    if __opts__.get('transport', '') == 'zeromq':
+        load['tok'] = _auth().gen_token('salt')
     # Changed for transport plugin
     # sreq = salt.payload.SREQ(__opts__['master_uri'])
     # ret = sreq.send('aes', auth.crypticle.dumps(load))
@@ -116,7 +116,7 @@ def send(func, *args, **kwargs):
 
         salt '*' mine.send network.interfaces eth0
     '''
-    if not func in __salt__:
+    if func not in __salt__:
         return False
     data = {}
     arg_data = salt.utils.arg_lookup(__salt__[func])
@@ -143,13 +143,13 @@ def send(func, *args, **kwargs):
             old.update(data)
             data = old
         return __salt__['data.update']('mine_cache', data)
-    auth = _auth()
     load = {
             'cmd': '_mine',
             'data': data,
             'id': __opts__['id'],
-            'tok': auth.gen_token('salt'),
     }
+    if __opts__.get('transport', '') == 'zeromq':
+        load['tok'] = _auth().gen_token('salt')
     # Changed for transport plugin
     # sreq = salt.payload.SREQ(__opts__['master_uri'])
     # ret = sreq.send('aes', auth.crypticle.dumps(load))
@@ -198,15 +198,15 @@ def get(tgt, fun, expr_form='glob'):
             if isinstance(data, dict) and fun in data:
                 ret[__opts__['id']] = data[fun]
         return ret
-    auth = _auth()
     load = {
             'cmd': '_mine_get',
             'id': __opts__['id'],
             'tgt': tgt,
             'fun': fun,
             'expr_form': expr_form,
-            'tok': auth.gen_token('salt'),
     }
+    if __opts__.get('transport', '') == 'zeromq':
+        load['tok'] = _auth().gen_token('salt')
     # Changed for transport plugin
     # sreq = salt.payload.SREQ(__opts__['master_uri'])
     # ret = sreq.send('aes', auth.crypticle.dumps(load))
@@ -231,13 +231,13 @@ def delete(fun):
         if isinstance(data, dict) and fun in data:
             del data[fun]
         return __salt__['data.update']('mine_cache', data)
-    auth = _auth()
     load = {
             'cmd': '_mine_delete',
             'id': __opts__['id'],
             'fun': fun,
-            'tok': auth.gen_token('salt'),
     }
+    if __opts__.get('transport', '') == 'zeromq':
+        load['tok'] = _auth().gen_token('salt')
     # Changed for transport plugin
     # sreq = salt.payload.SREQ(__opts__['master_uri'])
     # ret = sreq.send('aes', auth.crypticle.dumps(load))
@@ -259,12 +259,12 @@ def flush():
     '''
     if __opts__['file_client'] == 'local':
         return __salt__['data.update']('mine_cache', {})
-    auth = _auth()
     load = {
             'cmd': '_mine_flush',
             'id': __opts__['id'],
-            'tok': auth.gen_token('salt'),
     }
+    if __opts__.get('transport', '') == 'zeromq':
+        load['tok'] = _auth().gen_token('salt')
     # Changed for transport plugin
     # sreq = salt.payload.SREQ(__opts__['master_uri'])
     # ret = sreq.send('aes', auth.crypticle.dumps(load))
@@ -321,8 +321,9 @@ def get_docker(interfaces=None, cidrs=None):
         else:
             for interface in interfaces:
                 if interface in containers['host']['interfaces']:
-                    for item in containers['host']['interfaces'][interface]['inet']:
-                        host_ips.append(item['address'])
+                    if 'inet' in containers['host']['interfaces'][interface]:
+                        for item in containers['host']['interfaces'][interface]['inet']:
+                            host_ips.append(item['address'])
         host_ips = list(set(host_ips))
 
         # Filter out ips from host_ips with cidrs

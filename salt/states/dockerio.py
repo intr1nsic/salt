@@ -38,7 +38,15 @@ Available Functions
   .. code-block:: yaml
 
       ubuntu:
-        docker.pulled
+        docker.pulled:
+          - tag: latest
+
+- pushed
+
+  .. code-block:: yaml
+
+      corp/mysuperdocker_img:
+        docker.pushed
 
 - installed
 
@@ -102,10 +110,14 @@ Available Functions
 
 '''
 import functools
+import logging
 
 # Import salt libs
 from salt._compat import string_types
 import salt.utils
+
+# Enable proper logging
+log = logging.getLogger(__name__)
 
 # Define the module's virtual name
 __virtualname__ = 'docker'
@@ -205,7 +217,7 @@ def mod_watch(name, sfun=None, *args, **kw):
                         ' implemented for {0}'.format(sfun))}
 
 
-def pulled(name, force=False, *args, **kwargs):
+def pulled(name, tag=None, force=False, *args, **kwargs):
     '''
     Pull an image from a docker registry. (`docker pull`)
 
@@ -216,11 +228,15 @@ def pulled(name, force=False, *args, **kwargs):
         and `docker.import_image <https://github.com/dotcloud/docker-py#api>`_
         (`docker import
         <http://docs.docker.io/en/latest/reference/commandline/cli/#import>`_).
-        NOTE that We added saltack a way to identify yourself via pillar,
-        see in the salt.modules.dockerio execution module how to ident yourself
-        via the pillar.
+        NOTE that we added in SaltStack a way to authenticate yourself with the
+        Docker Hub Registry by supplying your credentials (username, email & password)
+        using pillars. For more information, see salt.modules.dockerio execution
+        module.
 
     name
+        Name of the image
+
+    tag
         Tag of the image
 
     force
@@ -232,12 +248,57 @@ def pulled(name, force=False, *args, **kwargs):
         return _valid(
             name=name,
             comment='Image already pulled: {0}'.format(name))
-    previous_id = image_infos['out']['id'] if image_infos['status'] else None
+
+    if __opts__['test'] and force:
+        comment = 'Image {0} will be pulled'.format(name)
+        return {'name': name,
+                'changes': {},
+                'result': None,
+                'comment': comment}
+
+    previous_id = image_infos['out']['Id'] if image_infos['status'] else None
     pull = __salt__['docker.pull']
-    returned = pull(name)
+    returned = pull(name, tag=tag)
     if previous_id != returned['id']:
         changes = {name: {'old': previous_id,
                           'new': returned['id']}}
+    else:
+        changes = {}
+    return _ret_status(returned, name, changes=changes)
+
+
+def pushed(name):
+    '''
+    Push an image from a docker registry. (`docker push`)
+
+    .. note::
+
+        See first the documentation for `docker login`, `docker pull`,
+        `docker push`,
+        and `docker.import_image <https://github.com/dotcloud/docker-py#api>`_
+        (`docker import
+        <http://docs.docker.io/en/latest/reference/commandline/cli/#import>`_).
+        NOTE that we added in SaltStack a way to authenticate yourself with the
+        Docker Hub Registry by supplying your credentials (username, email & password)
+        using pillars. For more information, see salt.modules.dockerio execution
+        module.
+
+    name
+        Name of the image
+    '''
+
+    if __opts__['test']:
+        comment = 'Image {0} will be pushed'.format(name)
+        return {'name': name,
+                'changes': {},
+                'result': None,
+                'comment': comment}
+
+    push = __salt__['docker.push']
+    returned = push(name)
+    log.debug("Returned: "+str(returned))
+    if returned['status']:
+        changes = {name: {'Rev': returned['id']}}
     else:
         changes = {}
     return _ret_status(returned, name, changes=changes)
@@ -255,7 +316,7 @@ def built(name,
     Build a docker image from a path or URL to a dockerfile. (`docker build`)
 
     name
-        Tag of the image
+        Name of the image
 
     path
         URL (e.g. `url/branch/docker_dir/dockerfile`)
@@ -268,8 +329,16 @@ def built(name,
         return _valid(
             name=name,
             comment='Image already built: {0}, id: {1}'.format(
-                name, image_infos['out']['id']))
-    previous_id = image_infos['out']['id'] if image_infos['status'] else None
+                name, image_infos['out']['Id']))
+
+    if __opts__['test'] and force:
+        comment = 'Image {0} will be built'.format(name)
+        return {'name': name,
+                'changes': {},
+                'result': None,
+                'comment': comment}
+
+    previous_id = image_infos['out']['Id'] if image_infos['status'] else None
     build = __salt__['docker.build']
     kw = dict(tag=name,
               path=path,
@@ -318,7 +387,7 @@ def installed(name,
     environment
         Environment variables for the container, either
             - a mapping of key, values
-            - a list of mappings of key values
+            - a list of mappings of key, values
     ports
         List of ports definitions, either:
             - a port to map
@@ -346,7 +415,7 @@ def installed(name,
     already_exists = cinfos['status']
     # if container exists but is not started, try to start it
     if already_exists:
-        return _valid(comment='image {!r} already exists'.format(name))
+        return _valid(comment='image {0!r} already exists'.format(name))
     dports, dvolumes, denvironment = {}, [], {}
     if not ports:
         ports = []
@@ -394,8 +463,8 @@ def installed(name,
     changes = 'Container created'
     try:
         cid = out['out']['info']['id']
-    except Exception:
-        pass
+    except Exception, e:
+        log.debug(str(e))
     else:
         changes = 'Container {0} created'.format(cid)
         out['comment'] = changes
@@ -422,17 +491,17 @@ def absent(name):
             is_running = __salt__['docker.is_running'](cid)
             if is_running:
                 return _invalid(
-                    comment=('Container {!r}'
+                    comment=('Container {0!r}'
                              ' could not be stopped'.format(cid)))
             else:
-                return _valid(comment=('Container {!r}'
+                return _valid(comment=('Container {0!r}'
                                        ' was stopped,'.format(cid)),
                               changes={name: True})
         else:
-            return _valid(comment=('Container {!r}'
+            return _valid(comment=('Container {0!r}'
                                    ' is stopped,'.format(cid)))
     else:
-        return _valid(comment='Container {!r} not found'.format(name))
+        return _valid(comment='Container {0!r} not found'.format(name))
 
 
 def present(name):
@@ -445,8 +514,11 @@ def present(name):
     '''
     ins_container = __salt__['docker.inspect_container']
     cinfos = ins_container(name)
-    if cinfos['status']:
+    if 'id' in cinfos:
         cid = cinfos['id']
+    else:
+        cid = name
+    if cinfos['status']:
         return _valid(comment='Container {0} exists'.format(cid))
     else:
         return _invalid(comment='Container {0} not found'.format(cid or name))
@@ -549,7 +621,7 @@ def script(*args, **kw):
 def running(name, container=None, port_bindings=None, binds=None,
             publish_all_ports=False, links=None, lxc_conf=None,
             privileged=False, dns=None, volumes_from=None,
-            check_is_running=True):
+            network_mode=None, check_is_running=True):
     '''
     Ensure that a container is running. (`docker inspect`)
 
@@ -558,14 +630,6 @@ def running(name, container=None, port_bindings=None, binds=None,
 
     container
         name of the container to start
-
-    binds
-        like -v of docker run command
-
-        .. code-block:: yaml
-
-            - binds:
-                /var/log/service: /var/log/service
 
     publish_all_ports
 
@@ -587,8 +651,19 @@ def running(name, container=None, port_bindings=None, binds=None,
                 "5000/tcp":
                     HostIp: ""
                     HostPort: "5000"
+
     binds
-        List of volumes to mount
+        List of volumes to mount (like ``-v`` of ``docker run`` command),
+        mapping host directory to container directory.
+
+        For read-write mounting, use the short form:
+
+        .. code-block:: yaml
+
+            - binds:
+                /var/log/service: /var/log/service
+
+        Or, to specify read-only mounting, use the extended form:
 
         .. code-block:: yaml
 
@@ -616,34 +691,53 @@ def running(name, container=None, port_bindings=None, binds=None,
             - dns:
                 - name_other_container
 
+    network_mode
+        - 'bridge': creates a new network stack for the container on the docker bridge
+        - 'none': no networking for this container
+        - 'container:[name|id]': reuses another container network stack)
+        - 'host': use the host network stack inside the container
+
+        .. code-block:: yaml
+
+            - network_mode: host
+
     check_is_running
         Enable checking if a container should run or not.
         Useful for data-only containers that must be linked to another one.
         e.g. nginx <- static-files
     '''
+    if not container and name:
+        container = name
     is_running = __salt__['docker.is_running'](container)
     if is_running:
         return _valid(
-            comment='Container {!r} is started'.format(container))
+            comment='Container {0!r} is started'.format(container))
     else:
         started = __salt__['docker.start'](
             container, binds=binds, port_bindings=port_bindings,
             lxc_conf=lxc_conf, publish_all_ports=publish_all_ports,
             links=links, privileged=privileged,
-            dns=dns, volumes_from=volumes_from,
+            dns=dns, volumes_from=volumes_from, network_mode=network_mode,
         )
         if check_is_running:
             is_running = __salt__['docker.is_running'](container)
+            log.debug("Docker-io running:" + str(started))
+            log.debug("Docker-io running:" + str(is_running))
             if is_running:
                 return _valid(
-                    comment='Container {!r} started.\n'.format(container),
+                    comment='Container {0!r} started.\n'.format(container),
                     changes={name: True})
             else:
                 return _invalid(
-                    comment=('Container {!r}'
-                            ' cannot be started\n{!s}').format(container,
-                                                                started['out']))
+                    comment=(
+                        'Container {0!r} cannot be started\n{0!s}'
+                        .format(
+                            container,
+                            started['out'],
+                        )
+                    )
+                )
         else:
             return _valid(
-                comment='Container {!r} started.\n'.format(container),
+                comment='Container {0!r} started.\n'.format(container),
                 changes={name: True})

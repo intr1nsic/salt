@@ -165,7 +165,7 @@ def _get_jinja_error(trace, context=None):
     # resolve the filename
     add_log = False
     template_path = None
-    if not 'sls' in context:
+    if 'sls' not in context:
         if (
             (error[0] != '<unknown>')
             and os.path.exists(error[0])
@@ -283,14 +283,14 @@ def render_jinja_tmpl(tmplstr, context, tmplpath=None):
                               tmplstr)
     except jinja2.exceptions.UndefinedError as exc:
         trace = traceback.extract_tb(sys.exc_info()[2])
-        line, out = _get_jinja_error(trace, context=unicode_context)
-        if not line:
-            tmplstr = ''
+        out = _get_jinja_error(trace, context=unicode_context)[1]
+        tmplstr = ''
+        # Don't include the line number, since it is misreported
+        # https://github.com/mitsuhiko/jinja2/issues/276
         raise SaltRenderError(
             'Jinja variable {0}{1}'.format(
                 exc, out),
-            line,
-            tmplstr)
+            buf=tmplstr)
     except (SaltInvocationError, CommandExecutionError) as exc:
         trace = traceback.extract_tb(sys.exc_info()[2])
         line, out = _get_jinja_error(trace, context=unicode_context)

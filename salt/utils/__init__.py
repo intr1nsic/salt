@@ -3,6 +3,7 @@
 Some of the utils used by salt
 '''
 from __future__ import absolute_import
+from __future__ import print_function
 
 # Import python libs
 import contextlib
@@ -10,6 +11,7 @@ import copy
 import collections
 import datetime
 import distutils.version  # pylint: disable=E0611
+import errno
 import fnmatch
 import hashlib
 import imp
@@ -33,6 +35,7 @@ import types
 import warnings
 import yaml
 from calendar import month_abbr as months
+from string import maketrans
 
 # Try to load pwd, fallback to getpass if unsuccessful
 try:
@@ -87,6 +90,12 @@ except ImportError:
     # pwd is not available on windows
     HAS_PWD = False
 
+try:
+    import setproctitle
+    HAS_SETPROCTITLE = True
+except ImportError:
+    HAS_SETPROCTITLE = False
+
 # Import salt libs
 import salt._compat
 import salt.log
@@ -96,7 +105,9 @@ import salt.version
 from salt._compat import string_types
 from salt.utils.decorators import memoize as real_memoize
 from salt.exceptions import (
-    SaltClientError, CommandNotFoundError, SaltSystemExit, SaltInvocationError
+    CommandExecutionError, SaltClientError,
+    CommandNotFoundError, SaltSystemExit,
+    SaltInvocationError
 )
 
 
@@ -123,6 +134,7 @@ RED_BOLD = '\033[01;31m'
 ENDC = '\033[0m'
 
 log = logging.getLogger(__name__)
+_empty = object()
 
 
 def get_function_argspec(func):
@@ -389,7 +401,7 @@ def which(exe=None):
                 # Allows both 'cmd' and 'cmd.exe' to be matched.
                 for ext in ext_list:
                     # Windows filesystem is case insensitive so we
-                    # safely rely on that behaviour
+                    # safely rely on that behavior
                     if os.access(full_path + ext, os.X_OK):
                         return full_path + ext
         log.trace(
@@ -1210,7 +1222,7 @@ def subdict_match(data, expr, delim=':', regex_match=False):
         matchstr = delim.join(splits[idx:])
         log.debug('Attempting to match {0!r} in {1!r} using delimiter '
                   '{2!r}'.format(matchstr, key, delim))
-        match = traverse_dict(data, key, {}, delim=delim)
+        match = traverse_dict_and_list(data, key, {}, delim=delim)
         if match == {}:
             continue
         if isinstance(match, dict):
@@ -1250,6 +1262,47 @@ def traverse_dict(data, key, default, delim=':'):
     return data
 
 
+def traverse_dict_and_list(data, key, default, delim=':'):
+    '''
+    Traverse a dict or list using a colon-delimited (or otherwise delimited,
+    using the "delim" param) target string. The target 'foo:bar:0' will
+    return data['foo']['bar'][0] if this value exists, and will otherwise
+    return the dict in the default argument.
+    Function will automatically determine the target type.
+    The target 'foo:bar:0' will return data['foo']['bar'][0] if data like
+    {'foo':{'bar':['baz']}} , if data like {'foo':{'bar':{'0':'baz'}}}
+    then return data['foo']['bar']['0']
+    '''
+    for each in key.split(delim):
+        if isinstance(data, list):
+            try:
+                idx = int(each)
+            except ValueError:
+                embed_match = False
+                # Index was not numeric, lets look at any embedded dicts
+                for embedded in (x for x in data if isinstance(x, dict)):
+                    try:
+                        data = embedded[each]
+                        embed_match = True
+                        break
+                    except KeyError:
+                        pass
+                if not embed_match:
+                    # No embedded dicts matched, return the default
+                    return default
+            else:
+                try:
+                    data = data[idx]
+                except IndexError:
+                    return default
+        else:
+            try:
+                data = data[each]
+            except (KeyError, TypeError):
+                return default
+    return data
+
+
 def mkstemp(*args, **kwargs):
     '''
     Helper function which does exactly what `tempfile.mkstemp()` does but
@@ -1286,6 +1339,20 @@ def is_windows():
     Simple function to return if a host is Windows or not
     '''
     return sys.platform.startswith('win')
+
+
+def sanitize_win_path_string(winpath):
+    '''
+    Remove illegal path characters for windows
+    '''
+    intab = '<>:|?*'
+    outtab = '_' * len(intab)
+    trantab = maketrans(intab, outtab)
+    if isinstance(winpath, str):
+        winpath = winpath.translate(trantab)
+    elif isinstance(winpath, unicode):
+        winpath = winpath.translate(dict((ord(c), u'_') for c in intab))
+    return winpath
 
 
 @real_memoize
@@ -1419,20 +1486,26 @@ def check_state_result(running):
     if not running:
         return False
 
+    ret = True
     for state_result in running.itervalues():
         if not isinstance(state_result, dict):
             # return false when hosts return a list instead of a dict
-            return False
-
-        if 'result' in state_result:
-            if state_result.get('result', False) is False:
-                return False
-            return True
-
-        # Check nested state results
-        return check_state_result(state_result)
-
-    return True
+            ret = False
+        if ret:
+            result = state_result.get('result', _empty)
+            if result is False:
+                ret = False
+            # only override return value if we are not already failed
+            elif (
+                result is _empty
+                and isinstance(state_result, dict)
+                and ret
+            ):
+                ret = check_state_result(state_result)
+        # return as soon as we got a failure
+        if not ret:
+            break
+    return ret
 
 
 def test_mode(**kwargs):
@@ -1518,7 +1591,7 @@ def option(value, default='', opts=None, pillar=None):
         (pillar, value),
     )
     for source, val in sources:
-        out = traverse_dict(source, val, default)
+        out = traverse_dict_and_list(source, val, default)
         if out is not default:
             return out
     return default
@@ -1577,6 +1650,18 @@ def parse_docstring(docstring):
         deps = dep_list[0].replace(txt, '').strip().split(', ')
         ret['deps'] = deps
         return ret
+
+
+def print_cli(msg):
+    '''
+    Wrapper around print() that suppresses tracebacks on broken pipes (i.e.
+    when salt output is piped to less and less is stopped prematurely).
+    '''
+    try:
+        print(msg)
+    except IOError as exc:
+        if exc.errno != errno.EPIPE:
+            raise
 
 
 def safe_walk(top, topdown=True, onerror=None, followlinks=True, _seen=None):
@@ -2282,3 +2367,109 @@ def trim_dict(
             return data
     else:
         return data
+
+
+def total_seconds(td):
+    '''
+    Takes a timedelta and returns the total number of seconds
+    represented by the object. Wrapper for the total_seconds()
+    method which does not exist in versions of Python < 2.7.
+    '''
+    return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10**6) / 10**6
+
+
+def import_json():
+    '''
+    Import a json module, starting with the quick ones and going down the list)
+    '''
+    for fast_json in ('ujson', 'yajl', 'json'):
+        try:
+            mod = __import__(fast_json)
+            log.info('loaded {0} json lib'.format(fast_json))
+            return mod
+        except ImportError:
+            continue
+
+
+def appendproctitle(name):
+    '''
+    Append "name" to the current process title
+    '''
+    if HAS_SETPROCTITLE:
+        setproctitle.setproctitle(setproctitle.getproctitle() + ' ' + name)
+
+
+def chugid(runas):
+    '''
+    Change the current process to belong to
+    the imputed user (and the groups he belongs to)
+    '''
+    uinfo = pwd.getpwnam(runas)
+    supgroups = []
+    supgroups_seen = set()
+
+    # The line below used to exclude the current user's primary gid.
+    # However, when root belongs to more than one group
+    # this causes root's primary group of '0' to be dropped from
+    # his grouplist.  On FreeBSD, at least, this makes some
+    # command executions fail with 'access denied'.
+    #
+    # The Python documentation says that os.setgroups sets only
+    # the supplemental groups for a running process.  On FreeBSD
+    # this does not appear to be strictly true.
+    group_list = get_group_dict(runas, include_default=True)
+    if sys.platform == 'darwin':
+        group_list = [a for a in group_list
+                      if not a.startswith('_')]
+    for group_name in group_list:
+        gid = group_list[group_name]
+        if (gid not in supgroups_seen
+           and not supgroups_seen.add(gid)):
+            supgroups.append(gid)
+
+    if os.getgid() != uinfo.pw_gid:
+        try:
+            os.setgid(uinfo.pw_gid)
+        except OSError as err:
+            raise CommandExecutionError(
+                'Failed to change from gid {0} to {1}. Error: {2}'.format(
+                    os.getgid(), uinfo.pw_gid, err
+                )
+            )
+
+    # Set supplemental groups
+    if sorted(os.getgroups()) != sorted(supgroups):
+        try:
+            os.setgroups(supgroups)
+        except OSError as err:
+            raise CommandExecutionError(
+                'Failed to set supplemental groups to {0}. Error: {1}'.format(
+                    supgroups, err
+                )
+            )
+
+    if os.getuid() != uinfo.pw_uid:
+        try:
+            os.setuid(uinfo.pw_uid)
+        except OSError as err:
+            raise CommandExecutionError(
+                'Failed to change from uid {0} to {1}. Error: {2}'.format(
+                    os.getuid(), uinfo.pw_uid, err
+                )
+            )
+
+
+def chugid_and_umask(runas, umask):
+    '''
+    Helper method for for subprocess.Popen to initialise uid/gid and umask
+    for the new process.
+    '''
+    if runas is not None:
+        chugid(runas)
+    if umask is not None:
+        os.umask(umask)
+
+
+def rand_string(size=32):
+    key = os.urandom(size)
+    return key.encode('base64').replace('\n', '')

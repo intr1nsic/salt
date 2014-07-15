@@ -94,6 +94,10 @@
 # to False
 #color: True
 
+# Do not strip off the colored output from nested results and states outputs
+# (true by default)
+# strip_colors: false
+
 # Set the directory used to hold unix sockets
 #sock_dir: /var/run/salt/master
 
@@ -160,7 +164,7 @@
 # Works like autosign_file, but instead allows you to specify minion IDs for
 # which keys will automatically be rejected. Will override both membership in
 # the autosign_file and the auto_accept setting.
-#autoreject_file: /etc/salt/autosign.conf
+#autoreject_file: /etc/salt/autoreject.conf
 
 # Enable permissive access to the salt keys.  This allows you to run the
 # master or minion as root, but have a non-root group be given access to
@@ -227,9 +231,8 @@
 # no signature, it will still be accepted, and a warning message will be logged.
 # Conversely, if sign_pub_messages is False, but a minion receives a signed
 # message it will be accepted, the signature will not be checked, and a warning message
-# will be logged.  This behavior will go away in Salt 0.17.6 (or Hydrogen RC1, whichever
-# comes first) and these two situations will cause minion to throw an exception and
-# drop the message.
+# will be logged. This behavior went away in Salt 2014.1.0 and these two situations
+# will cause minion to throw an exception and drop the message.
 #
 # sign_pub_messages: False
 

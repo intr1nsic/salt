@@ -175,7 +175,7 @@ class OptionParser(optparse.OptionParser):
                     self.config['conf_file']
                 )
             )
-        # Retain the standard behaviour of optparse to return options and args
+        # Retain the standard behavior of optparse to return options and args
         return options, args
 
     def _populate_option_list(self, option_list, add_help=True):
@@ -374,6 +374,20 @@ class SaltfileMixIn(object):
                     setattr(self.options,
                             option.dest,
                             cli_config[option.dest])
+
+
+class HardCrashMixin(object):
+    __metaclass__ = MixInMeta
+    _mixin_prio_ = 40
+    _config_filename_ = None
+
+    def _mixin_setup(self):
+        hc = os.environ.get('SALT_HARD_CRASH', False)
+        self.add_option(
+            '--hard-crash', action='store_true', default=hc,
+            help=('Raise any original exception rather than exiting gracefully'
+                  ' Default: %default')
+        )
 
 
 class ConfigDirMixIn(object):
@@ -650,7 +664,9 @@ class LogLevelMixIn(object):
                 if current_user in self.config.get('client_acl', {}).keys():
                     # Yep, the user is in ACL!
                     # Let's write the logfile to its home directory instead.
-                    user_salt_dir = salt.utils.xdg.xdg_config_dir('salt')
+                    xdg_dir = salt.utils.xdg.xdg_config_dir()
+                    user_salt_dir = xdg_dir if os.path.isdir(xdg_dir) else '~/.salt'
+
                     if not os.path.isdir(user_salt_dir):
                         os.makedirs(user_salt_dir, 0750)
                     logfile_basename = os.path.basename(
@@ -887,13 +903,6 @@ class ExtendedTargetOptionsMixIn(TargetOptionsMixIn):
                   'targets other than globs are preceded with an identifier '
                   'matching the specific targets argument type: salt '
                   '\'G@os:RedHat and webser* or E@database.*\'')
-        )
-        group.add_option(
-            '-X', '--exsel',
-            default=False,
-            action='store_true',
-            help=('Instead of using shell globs use the return code of '
-                  'a function.')
         )
         group.add_option(
             '-I', '--pillar',
@@ -1451,19 +1460,17 @@ class CloudCredentialsMixIn(object):
                   ' PROVIDER can be specified with or without a driver, for example:'
                   ' "--set-password bob rackspace"'
                   ' or more specific'
-                  ' "--set-password bob rackspace:openstack"')
+                  ' "--set-password bob rackspace:openstack"'
+                  ' DEPRECATED!')
         )
         self.add_option_group(group)
 
     def process_set_password(self):
         if self.options.set_password:
-            self.credential_username, self.credential_provider = self.options.set_password
-            if self.credential_provider.startswith('-') or \
-                    '=' in self.credential_provider:
-                self.error(
-                    '--set-password expects two arguments: <username> '
-                    '<provider>'
-                )
+            raise RuntimeError(
+                    'This functionality is not supported; '
+                    'please see the keyring module at http://docs.saltstack.com/en/latest/topics/sdb/'
+            )
 
 
 class MasterOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
@@ -1525,7 +1532,7 @@ class SyndicOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
 
 class SaltCMDOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
                           TimeoutMixIn, ExtendedTargetOptionsMixIn,
-                          OutputOptionsMixIn, LogLevelMixIn):
+                          OutputOptionsMixIn, LogLevelMixIn, HardCrashMixin):
 
     __metaclass__ = OptionParserMeta
 
@@ -1646,6 +1653,18 @@ class SaltCMDOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
             action='store_true',
             help=('Display summary information about a salt command')
         )
+        self.add_option(
+            '--username',
+            dest='username',
+            nargs=1,
+            help=('Username for external authentication')
+        )
+        self.add_option(
+            '--password',
+            dest='password',
+            nargs=1,
+            help=('Password for external authentication')
+        )
 
     def _mixin_after_parsed(self):
         if len(self.args) <= 1 and not self.options.doc:
@@ -1731,7 +1750,8 @@ class SaltCMDOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
 
 
 class SaltCPOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
-                         TimeoutMixIn, TargetOptionsMixIn, LogLevelMixIn):
+                         TimeoutMixIn, TargetOptionsMixIn, LogLevelMixIn,
+                         HardCrashMixin):
     __metaclass__ = OptionParserMeta
 
     description = (
@@ -1773,7 +1793,8 @@ class SaltCPOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
 
 
 class SaltKeyOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
-                          LogLevelMixIn, OutputOptionsMixIn, RunUserMixin):
+                          LogLevelMixIn, OutputOptionsMixIn, RunUserMixin,
+                          HardCrashMixin):
 
     __metaclass__ = OptionParserMeta
 
@@ -1928,9 +1949,49 @@ class SaltKeyOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
                   '; default=%default')
         )
 
+        key_options_group.add_option(
+            '--gen-signature',
+            default=False,
+            action='store_true',
+            help=('Create a signature file of the masters public-key named '
+                  'master_pubkey_signature. The signature can be send to a '
+                  'minion in the masters auth-reply and enables the minion '
+                  'to verify the masters public-key cryptographically. '
+                  'This requires a new signing-key-pair which can be auto-created '
+                  'with the --auto-create parameter')
+        )
+
+        key_options_group.add_option(
+            '--priv',
+            default='',
+            type=str,
+            help=('The private-key file to create a signature with')
+        )
+
+        key_options_group.add_option(
+            '--signature-path',
+            default='',
+            type=str,
+            help=('The path where the signature file should be written')
+        )
+
+        key_options_group.add_option(
+            '--pub',
+            default='',
+            type=str,
+            help=('The public-key file to create a signature for')
+        )
+
+        key_options_group.add_option(
+            '--auto-create',
+            default=False,
+            action='store_true',
+            help=('Auto-create a signing key-pair if it does not yet exist')
+        )
+
     def process_config_dir(self):
         if self.options.gen_keys:
-            # We're generating keys, override the default behaviour of this
+            # We're generating keys, override the default behavior of this
             # function if we don't have any access to the configuration
             # directory.
             if not os.access(self.options.config_dir, os.R_OK):
@@ -1986,7 +2047,7 @@ class SaltKeyOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
 
 
 class SaltCallOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
-                           LogLevelMixIn, OutputOptionsMixIn):
+                           LogLevelMixIn, OutputOptionsMixIn, HardCrashMixin):
     __metaclass__ = OptionParserMeta
 
     description = ('Salt call is used to execute module functions locally '
@@ -2117,7 +2178,7 @@ class SaltCallOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
 
 
 class SaltRunOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
-                          TimeoutMixIn, LogLevelMixIn):
+                          TimeoutMixIn, LogLevelMixIn, HardCrashMixin):
     __metaclass__ = OptionParserMeta
 
     default_timeout = 1
@@ -2179,7 +2240,7 @@ class SaltRunOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
 
 class SaltSSHOptionParser(OptionParser, ConfigDirMixIn, MergeConfigMixIn,
                           LogLevelMixIn, TargetOptionsMixIn,
-                          OutputOptionsMixIn, SaltfileMixIn):
+                          OutputOptionsMixIn, SaltfileMixIn, HardCrashMixin):
     __metaclass__ = OptionParserMeta
 
     usage = '%prog [options]'
@@ -2320,7 +2381,8 @@ class SaltCloudParser(OptionParser,
                       CloudQueriesMixIn,
                       ExecutionOptionsMixIn,
                       CloudProvidersListsMixIn,
-                  CloudCredentialsMixIn):
+                      CloudCredentialsMixIn,
+                      HardCrashMixin):
 
     __metaclass__ = OptionParserMeta
 

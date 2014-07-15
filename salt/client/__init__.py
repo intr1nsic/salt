@@ -25,6 +25,7 @@ import time
 import copy
 import logging
 from datetime import datetime
+from salt._compat import string_types
 
 # Import salt libs
 import salt.config
@@ -40,7 +41,6 @@ import salt.syspaths as syspaths
 from salt.exceptions import (
     EauthAuthenticationError, SaltInvocationError, SaltReqTimeoutError
 )
-from salt._compat import string_types
 
 # Try to import range from https://github.com/ytoolshed/range
 HAS_RANGE = False
@@ -55,7 +55,8 @@ log = logging.getLogger(__name__)
 
 def get_local_client(
         c_path=os.path.join(syspaths.CONFIG_DIR, 'master'),
-        mopts=None):
+        mopts=None,
+        skip_perm_errors=False):
     '''
     .. versionadded:: Helium
 
@@ -71,7 +72,7 @@ def get_local_client(
         import salt.client.raet
         return salt.client.raet.LocalClient(mopts=opts)
     elif opts['transport'] == 'zeromq':
-        return LocalClient(mopts=opts)
+        return LocalClient(mopts=opts, skip_perm_errors=skip_perm_errors)
 
 
 class LocalClient(object):
@@ -96,7 +97,7 @@ class LocalClient(object):
     '''
     def __init__(self,
                  c_path=os.path.join(syspaths.CONFIG_DIR, 'master'),
-                 mopts=None):
+                 mopts=None, skip_perm_errors=False):
         if mopts:
             self.opts = mopts
         else:
@@ -110,6 +111,7 @@ class LocalClient(object):
             self.opts = salt.config.client_config(c_path)
         self.serial = salt.payload.Serial(self.opts)
         self.salt_user = self.__get_user()
+        self.skip_perm_errors = skip_perm_errors
         self.key = self.__read_master_key()
         self.event = salt.utils.event.get_event(
                 'master',
@@ -132,7 +134,9 @@ class LocalClient(object):
         keyfile = os.path.join(self.opts['cachedir'],
                                '.{0}_key'.format(key_user))
         # Make sure all key parent directories are accessible
-        salt.utils.verify.check_path_traversal(self.opts['cachedir'], key_user)
+        salt.utils.verify.check_path_traversal(self.opts['cachedir'],
+                                               key_user,
+                                               self.skip_perm_errors)
 
         try:
             with salt.utils.fopen(keyfile, 'r') as key:
@@ -174,7 +178,7 @@ class LocalClient(object):
             return self.opts['timeout']
         if isinstance(timeout, int):
             return timeout
-        if isinstance(timeout, str):
+        if isinstance(timeout, string_types):
             try:
                 return int(timeout)
             except ValueError:
@@ -210,9 +214,12 @@ class LocalClient(object):
         Common checks on the pub_data data structure returned from running pub
         '''
         if not pub_data:
+            # Failed to autnenticate, this could be a bunch of things
             raise EauthAuthenticationError(
-                'Failed to authenticate, is this user permitted to execute '
-                'commands?'
+                'Failed to authenticate!  This is most likely because this '
+                'user is not permitted to execute commands, but there is a '
+                'small possibility that a disk error ocurred (check '
+                'disk/inode usage).'
             )
 
         # Failed to connect to the master and send the pub
@@ -515,9 +522,20 @@ class LocalClient(object):
         if not pub_data:
             return pub_data
 
-        return self.get_returns(pub_data['jid'],
-                                pub_data['minions'],
-                                self._get_timeout(timeout))
+        ret = {}
+        for fn_ret in self.get_cli_event_returns(
+                pub_data['jid'],
+                pub_data['minions'],
+                self._get_timeout(timeout),
+                tgt,
+                expr_form,
+                **kwargs):
+
+            if fn_ret:
+                for mid, data in fn_ret.items():
+                    ret[mid] = data.get('ret', {})
+
+        return ret
 
     def cmd_cli(
             self,
@@ -1336,6 +1354,11 @@ class LocalClient(object):
         # Make sure the publisher is running by checking the unix socket
         if not os.path.exists(os.path.join(self.opts['sock_dir'],
                                            'publish_pull.ipc')):
+            log.error(
+                'Unable to connect to the publisher! '
+                'You do not have permissions to access '
+                '{0}'.format(self.opts['sock_dir'])
+            )
             return {'jid': '0', 'minions': []}
 
         payload_kwargs = self._prep_pub(
@@ -1550,7 +1573,7 @@ class Caller(object):
 
     Note, a running master or minion daemon is not required to use this class.
     Running ``salt-call --local`` simply sets :conf_minion:`file_client` to
-    ``'local'``. The same can be achived at the Python level by including that
+    ``'local'``. The same can be achieved at the Python level by including that
     setting in a minion config file.
 
     Instantiate a new Caller() instance using a file system path to the minion

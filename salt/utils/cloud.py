@@ -8,6 +8,7 @@ import os
 import sys
 import codecs
 import shutil
+import hashlib
 import socket
 import tempfile
 import time
@@ -15,7 +16,7 @@ import subprocess
 import multiprocessing
 import logging
 import pipes
-import json
+import msgpack
 import traceback
 import copy
 import re
@@ -188,7 +189,7 @@ def minion_config(opts, vm_):
     '''
 
     # Let's get a copy of the salt minion default options
-    minion = salt.config.DEFAULT_MINION_OPTS.copy()
+    minion = copy.deepcopy(salt.config.DEFAULT_MINION_OPTS)
     # Some default options are Null, let's set a reasonable default
     minion.update(
         log_level='info',
@@ -233,7 +234,7 @@ def master_config(opts, vm_):
     Return a master's configuration for the provided options and VM
     '''
     # Let's get a copy of the salt master default options
-    master = salt.config.DEFAULT_MASTER_OPTS.copy()
+    master = copy.deepcopy(salt.config.DEFAULT_MASTER_OPTS)
     # Some default options are Null, let's set a reasonable default
     master.update(
         log_level='info',
@@ -1335,11 +1336,9 @@ def fire_event(key, msg, tag, args=None, sock_dir=None, transport='zeromq'):
 
 
 def _exec_ssh_cmd(cmd,
-                  error_msg='Failed to execute command {0!r}: {1}\n{2}',
+                  error_msg='A wrong password has been issued while establishing ssh session',
                   **kwargs):
     password_retries = kwargs.get('password_retries', 3)
-    error_msg = (
-        'A wrong password has been issued while establishing ssh session')
     try:
         stdout, stderr = None, None
         proc = vt.Terminal(
@@ -1368,7 +1367,7 @@ def _exec_ssh_cmd(cmd,
         trace = traceback.format_exc()
         log.error(error_msg.format(cmd, err, trace))
     finally:
-        proc.terminate()
+        proc.close(terminate=True, kill=True)
     # Signal an error
     return 1
 
@@ -1871,10 +1870,10 @@ def request_minion_cachedir(
         'provider': provider,
     }
 
-    fname = '{0}.json'.format(minion_id)
+    fname = '{0}.p'.format(minion_id)
     path = os.path.join(base, 'requested', fname)
     with salt.utils.fopen(path, 'w') as fh_:
-        json.dump(data, fh_)
+        msgpack.dump(data, fh_)
 
 
 def change_minion_cachedir(
@@ -1902,16 +1901,16 @@ def change_minion_cachedir(
     if base is None:
         base = os.path.join(syspaths.CACHE_DIR, 'cloud')
 
-    fname = '{0}.json'.format(minion_id)
+    fname = '{0}.p'.format(minion_id)
     path = os.path.join(base, cachedir, fname)
 
     with salt.utils.fopen(path, 'r') as fh_:
-        cache_data = json.load(fh_)
+        cache_data = msgpack.load(fh_)
 
     cache_data.update(data)
 
     with salt.utils.fopen(path, 'w') as fh_:
-        json.dump(cache_data, fh_)
+        msgpack.dump(cache_data, fh_)
 
 
 def activate_minion_cachedir(minion_id, base=None):
@@ -1923,7 +1922,7 @@ def activate_minion_cachedir(minion_id, base=None):
     if base is None:
         base = os.path.join(syspaths.CACHE_DIR, 'cloud')
 
-    fname = '{0}.json'.format(minion_id)
+    fname = '{0}.p'.format(minion_id)
     src = os.path.join(base, 'requested', fname)
     dst = os.path.join(base, 'active')
     shutil.move(src, dst)
@@ -1942,7 +1941,7 @@ def delete_minion_cachedir(minion_id, provider, opts, base=None):
         base = os.path.join(syspaths.CACHE_DIR, 'cloud')
 
     driver = opts['providers'][provider].keys()[0]
-    fname = '{0}.json'.format(minion_id)
+    fname = '{0}.p'.format(minion_id)
     for cachedir in ('requested', 'active'):
         path = os.path.join(base, cachedir, driver, provider, fname)
         log.debug('path: {0}'.format(path))
@@ -1950,28 +1949,61 @@ def delete_minion_cachedir(minion_id, provider, opts, base=None):
             os.remove(path)
 
 
-def update_bootstrap(config):
+def update_bootstrap(config, url=None):
+
     '''
     Update the salt-bootstrap script
+
+        url can be either:
+
+            - The URL to fetch the bootstrap script from
+            - The absolute path to the bootstrap
+            - The content of the bootstrap script
+
+
     '''
-    log.debug('Updating the bootstrap-salt.sh script to latest stable')
-    try:
-        import requests
-    except ImportError:
-        return {'error': (
-            'Updating the bootstrap-salt.sh script requires the '
-            'Python requests library to be installed'
-        )}
-    url = 'https://raw.githubusercontent.com/saltstack/salt-bootstrap/stable/bootstrap-salt.sh'
-    req = requests.get(url)
-    if req.status_code != 200:
-        return {'error': (
-            'Failed to download the latest stable version of the '
-            'bootstrap-salt.sh script from {0}. HTTP error: '
-            '{1}'.format(
-                url, req.status_code
-            )
-        )}
+    default_url = config.get('bootstrap_script__url',
+                             'https://bootstrap.saltstack.com')
+    if not url:
+        url = default_url
+    if not url:
+        raise ValueError('Cant get any source to update')
+    if (url.startswith('http')) or ('://' in url):
+        log.debug('Updating the bootstrap-salt.sh script to latest stable')
+        try:
+            import requests
+        except ImportError:
+            return {'error': (
+                'Updating the bootstrap-salt.sh script requires the '
+                'Python requests library to be installed'
+            )}
+        req = requests.get(url)
+        if req.status_code != 200:
+            return {'error': (
+                'Failed to download the latest stable version of the '
+                'bootstrap-salt.sh script from {0}. HTTP error: '
+                '{1}'.format(
+                    url, req.status_code
+                )
+            )}
+        script_content = req.text
+        if url == default_url:
+            script_name = 'bootstrap-salt.sh'
+        else:
+            script_name = os.path.basename(url)
+    elif os.path.exists(url):
+        with open(url) as fic:
+            script_content = fic.read()
+        script_name = os.path.basename(url)
+    # in last case, assuming we got a script content
+    else:
+        script_content = url
+        script_name = '{0}.sh'.format(
+            hashlib.sha1(script_content).hexdigest()
+        )
+
+    if not script_content:
+        raise ValueError('No content in bootstrap script !')
 
     # Get the path to the built-in deploy scripts directory
     builtin_deploy_dir = os.path.join(
@@ -2046,11 +2078,11 @@ def update_bootstrap(config):
             )
             continue
 
-        deploy_path = os.path.join(entry, 'bootstrap-salt.sh')
+        deploy_path = os.path.join(entry, script_name)
         try:
             finished_full.append(deploy_path)
             with salt.utils.fopen(deploy_path, 'w') as fp_:
-                fp_.write(req.text)
+                fp_.write(script_content)
         except (OSError, IOError) as err:
             log.debug(
                 'Failed to write the updated script: {0}'.format(err)
@@ -2067,7 +2099,7 @@ def cache_node_list(nodes, provider, opts):
 
     .. versionadded:: Helium
     '''
-    if not 'update_cachedir' in opts or not opts['update_cachedir']:
+    if 'update_cachedir' not in opts or not opts['update_cachedir']:
         return
 
     base = os.path.join(init_cachedir(), 'active')
@@ -2081,9 +2113,9 @@ def cache_node_list(nodes, provider, opts):
 
     for node in nodes:
         diff_node_cache(prov_dir, node, nodes[node], opts)
-        path = os.path.join(prov_dir, '{0}.json'.format(node))
+        path = os.path.join(prov_dir, '{0}.p'.format(node))
         with salt.utils.fopen(path, 'w') as fh_:
-            json.dump(nodes[node], fh_)
+            msgpack.dump(nodes[node], fh_)
 
 
 def cache_node(node, provider, opts):
@@ -2092,7 +2124,7 @@ def cache_node(node, provider, opts):
 
     .. versionadded:: Helium
     '''
-    if not 'update_cachedir' in opts or not opts['update_cachedir']:
+    if 'update_cachedir' not in opts or not opts['update_cachedir']:
         return
 
     if not os.path.exists(os.path.join(syspaths.CACHE_DIR, 'cloud', 'active')):
@@ -2103,9 +2135,9 @@ def cache_node(node, provider, opts):
     prov_dir = os.path.join(base, driver, provider)
     if not os.path.exists(prov_dir):
         os.makedirs(prov_dir)
-    path = os.path.join(prov_dir, '{0}.json'.format(node['name']))
+    path = os.path.join(prov_dir, '{0}.p'.format(node['name']))
     with salt.utils.fopen(path, 'w') as fh_:
-        json.dump(node, fh_)
+        msgpack.dump(node, fh_)
 
 
 def missing_node_cache(prov_dir, node_list, provider, opts):
@@ -2124,7 +2156,7 @@ def missing_node_cache(prov_dir, node_list, provider, opts):
     '''
     cached_nodes = []
     for node in os.listdir(prov_dir):
-        cached_nodes.append(node.replace('.json', ''))
+        cached_nodes.append(node.replace('.p', ''))
 
     log.debug(sorted(cached_nodes))
     log.debug(sorted(node_list))
@@ -2155,11 +2187,11 @@ def diff_node_cache(prov_dir, node, new_data, opts):
 
     .. versionadded:: Helium
     '''
-    if not 'diff_cache_events' in opts or not opts['diff_cache_events']:
+    if 'diff_cache_events' not in opts or not opts['diff_cache_events']:
         return
 
     path = os.path.join(prov_dir, node)
-    path = '{0}.json'.format(path)
+    path = '{0}.p'.format(path)
 
     if not os.path.exists(path):
         event_data = _strip_cache_events(new_data, opts)
@@ -2175,7 +2207,7 @@ def diff_node_cache(prov_dir, node, new_data, opts):
 
     with salt.utils.fopen(path, 'r') as fh_:
         try:
-            cache_data = json.load(fh_)
+            cache_data = msgpack.load(fh_)
         except ValueError as exc:
             log.warning('Cache for {0} was corrupt: Deleting'.format(node))
             cache_data = {}

@@ -25,6 +25,13 @@ __func_alias__ = {
 }
 
 
+def _file_or_content(file_):
+    if os.path.exists(file_):
+        with open(file_) as fic:
+            return fic.read()
+    return file_
+
+
 def _mount(path, ftype):
     mpt = None
     if ftype == 'block':
@@ -141,9 +148,16 @@ def _prep_bootstrap(mpt):
     shutil.copy(bs_, os.path.join(mpt, 'tmp'))
 
 
-def mkconfig(config=None, tmp=None, id_=None, approve_key=True):
+def mkconfig(config=None, tmp=None, id_=None, approve_key=True,
+            pub_key=None, priv_key=None):
     '''
     Generate keys and config and put them in a tmp directory.
+
+    pub_key
+        absolute path or file content of an optional preseeded salt key
+
+    priv_key
+        absolute path or file content of an optional preseeded salt key
 
     CLI Example:
 
@@ -156,7 +170,7 @@ def mkconfig(config=None, tmp=None, id_=None, approve_key=True):
         tmp = tempfile.mkdtemp()
     if config is None:
         config = {}
-    if not 'master' in config and __opts__['master'] != 'salt':
+    if 'master' not in config and __opts__['master'] != 'salt':
         config['master'] = __opts__['master']
     if id_:
         config['id'] = id_
@@ -167,11 +181,19 @@ def mkconfig(config=None, tmp=None, id_=None, approve_key=True):
         fp_.write(yaml.dump(config, default_flow_style=False))
 
     # Generate keys for the minion
-    salt.crypt.gen_keys(tmp, 'minion', 2048)
     pubkeyfn = os.path.join(tmp, 'minion.pub')
     privkeyfn = os.path.join(tmp, 'minion.pem')
-
-    if approve_key:
+    preseeded = pub_key and priv_key
+    if preseeded:
+        with open(pubkeyfn, 'w') as fic:
+            fic.write(_file_or_content(pub_key))
+        with open(privkeyfn, 'w') as fic:
+            fic.write(_file_or_content(priv_key))
+        os.chmod(pubkeyfn, 0600)
+        os.chmod(privkeyfn, 0600)
+    else:
+        salt.crypt.gen_keys(tmp, 'minion', 2048)
+    if approve_key and not preseeded:
         with salt.utils.fopen(pubkeyfn) as fp_:
             pubkey = fp_.read()
             __salt__['pillar.ext']({'virtkey': [id_, pubkey]})
@@ -209,7 +231,7 @@ def _check_resolv(mpt):
     if not replace:
         with salt.utils.fopen(resolv, 'rb') as fp_:
             conts = fp_.read()
-            if not 'nameserver' in conts:
+            if 'nameserver' not in conts:
                 replace = True
     if replace:
         shutil.copy('/etc/resolv.conf', resolv)

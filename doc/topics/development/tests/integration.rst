@@ -28,14 +28,14 @@ In order for Salt's test suite to recognize tests within the newly
 created directory, options to run the new integration tests must be added to
 ``tests/runtests.py``. Examples of the necessary options that must be added
 can be found here: :blob:`tests/runtests.py`. The functions that need to be
-edited are `setup_additional_options`, `validate_options`, and
-`run_integration_tests`.
+edited are ``setup_additional_options``, ``validate_options``, and
+``run_integration_tests``.
 
 
 Integration Classes
 ===================
 
-The integration classes are located in tests/integration/__init__.py and
+The integration classes are located in ``tests/integration/__init__.py`` and
 can be extended therein. There are three classes available to extend:
 
 ModuleCase
@@ -266,7 +266,6 @@ the test method:
     import integration
     from salttesting.helpers import destructiveTest
 
-
     class DestructiveExampleModuleTest(integration.ModuleCase):
         '''
         Demonstrate a destructive test
@@ -283,3 +282,133 @@ the test method:
             self.assertSaltTrueReturn(ret)
             ret = self.run_state('user.absent', name='salt_test')
             self.assertSaltTrueReturn(ret)
+
+
+Cloud Provider Tests
+====================
+
+Cloud provider integration tests are used to assess :ref:`Salt-Cloud<salt-cloud>`'s
+ability to create and destroy cloud instances for various supported cloud providers.
+Cloud provider tests inherit from the ShellCase Integration Class.
+
+Any new cloud provider test files should be added to the ``tests/integration/cloud/providers/``
+directory. Each cloud provider test file also requires a sample cloud profile and cloud
+provider configuration file in the integration test file directory located at
+``tests/integration/files/conf/cloud.*.d/``.
+
+The following is an example of the default profile configuration file for Digital
+Ocean, located at: ``tests/integration/files/conf/cloud.profiles.d/digital_ocean.conf``:
+
+.. code-block:: yaml
+
+    digitalocean-test:
+      provider: digitalocean-config
+      image: Ubuntu 14.04 x64
+      size: 512MB
+
+Each cloud provider requires different configuration credentials. Therefore, sensitive
+information such as API keys or passwords should be omitted from the cloud provider
+configuration file and replaced with an empty string. The necessary credentials can
+be provided by the user by editing the provider configuration file before running the
+tests.
+
+The following is an example of the default provider configuration file for Digital
+Ocean, located at: ``tests/integration/files/conf/cloud.providers.d/digital_ocean.conf``:
+
+.. code-block:: yaml
+
+    digitalocean-config:
+      provider: digital_ocean
+      client_key: ''
+      api_key: ''
+      location: New York 1
+
+In addition to providing the necessary cloud profile and provider files in the integration
+test suite file structure, appropriate checks for if the configuration files exist and
+contain valid information are also required in the test class's ``setUp`` function:
+
+.. code-block:: python
+
+    class LinodeTest(integration.ShellCase):
+    '''
+    Integration tests for the Linode cloud provider in Salt-Cloud
+    '''
+
+    def setUp(self):
+        '''
+        Sets up the test requirements
+        '''
+        super(LinodeTest, self).setUp()
+
+        # check if appropriate cloud provider and profile files are present
+        profile_str = 'linode-config:'
+        provider = 'linode'
+        providers = self.run_cloud('--list-providers')
+        if profile_str not in providers:
+            self.skipTest(
+                'Configuration file for {0} was not found. Check {0}.conf files '
+                'in tests/integration/files/conf/cloud.*.d/ to run these tests.'
+                .format(provider)
+            )
+
+        # check if apikey and password are present
+        path = os.path.join(integration.FILES,
+                            'conf',
+                            'cloud.providers.d',
+                            provider + '.conf')
+        config = cloud_providers_config(path)
+        api = config['linode-config']['linode']['apikey']
+        password = config['linode-config']['linode']['password']
+        if api == '' or password == '':
+            self.skipTest(
+                'An api key and password must be provided to run these tests. Check '
+                'tests/integration/files/conf/cloud.providers.d/{0}.conf'.format(
+                    provider
+                )
+            )
+
+Repeatedly creating and destroying instances on cloud providers can be costly.
+Therefore, cloud provider tests are off by default and do not run automatically. To
+run the cloud provider tests, the ``--cloud-provider-tests`` flag must be provided:
+
+.. code-block:: bash
+
+    ./tests/runtests.py --cloud-provider-tests
+
+Since cloud provider tests do not run automatically, all provider tests must be
+preceded with the ``@expensiveTest`` decorator. The expensive test decorator is
+necessary because it signals to the test suite that the
+``--cloud-provider-tests`` flag is required to run the cloud provider tests.
+
+To write a cloud provider test, import and use the expensiveTest decorator for
+the test function:
+
+.. code-block:: python
+
+    from salttesting.helpers import expensiveTest
+
+    @expensiveTest
+    def test_instance(self):
+        '''
+        Test creating an instance on Linode
+        '''
+        name = 'linode-testing'
+
+        # create the instance
+        instance = self.run_cloud('-p linode-test {0}'.format(name))
+        str = '        {0}'.format(name)
+
+        # check if instance with salt installed returned as expected
+        try:
+            self.assertIn(str, instance)
+        except AssertionError:
+            self.run_cloud('-d {0} --assume-yes'.format(name))
+            raise
+
+        # delete the instance
+        delete = self.run_cloud('-d {0} --assume-yes'.format(name))
+        str = '            True'
+        try:
+            self.assertIn(str, delete)
+        except AssertionError:
+            raise

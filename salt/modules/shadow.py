@@ -13,7 +13,12 @@ except ImportError:
 
 # Import salt libs
 import salt.utils
-import salt.utils.pycrypto
+from salt.exceptions import CommandExecutionError
+try:
+    import salt.utils.pycrypto
+    HAS_CRYPT = True
+except ImportError:
+    HAS_CRYPT = False
 
 
 def __virtual__():
@@ -156,7 +161,28 @@ def gen_password(password, crypt_salt=None, algorithm='sha512'):
         salt '*' shadow.gen_password 'I_am_password'
         salt '*' shadow.gen_password 'I_am_password' crypt_salt'I_am_salt' algorithm=sha256
     '''
+    if not HAS_CRYPT:
+        raise CommandExecutionError(
+                'gen_password is not available on this operating system '
+                'because the "crypt" python module is not available.'
+                )
     return salt.utils.pycrypto.gen_hash(crypt_salt, password, algorithm)
+
+
+def del_password(name):
+    '''
+    Delete the password from name user
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' shadow.del_password username
+    '''
+    cmd = 'passwd -d {0}'.format(name)
+    __salt__['cmd.run'](cmd, output_loglevel='quiet')
+    uinfo = info(name)
+    return not uinfo['passwd']
 
 
 def set_password(name, password, use_usermod=False):

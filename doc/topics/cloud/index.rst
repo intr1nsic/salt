@@ -17,6 +17,7 @@ Using Salt Cloud
 .. toctree::
     :maxdepth: 3
 
+    Basic <basic>
     Profiles <profiles>
     Maps <map>
     Actions <action>
@@ -36,16 +37,20 @@ Windows Configuration
 
         Windows Configuration <windows>
 
+.. _cloud-provider-specifics:
+
 Cloud Provider Specifics
 ========================
 .. toctree::
     :maxdepth: 3
 
+        Getting Started With Aliyun <aliyun>
         Getting Started With Azure <azure>
         Getting Started With Digital Ocean <digitalocean>
         Getting Started With EC2 <aws>
         Getting Started With GoGrid <gogrid>
         Getting Started With Google Compute Engine <gce>
+        Getting Started With HP Cloud <hpcloud>
         Getting Started With Joyent <joyent>
         Getting Started With LXC <lxc>
         Getting Started With Linode <linode>
@@ -53,10 +58,8 @@ Cloud Provider Specifics
         Getting Started With Parallels <parallels>
         Getting Started With Proxmox <proxmox>
         Getting Started With Rackspace <rackspace>
-        Getting Started With HP Cloud <hpcloud>
         Getting Started With SoftLayer <softlayer>
         Getting Started With Vexxhost <vexxhost>
-        Getting Started With Aliyun <aliyun>
 
 Miscellaneous Options
 =====================

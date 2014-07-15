@@ -123,7 +123,12 @@ def installed(name,
               no_chown=False,
               cwd=None,
               activate=False,
-              pre_releases=False):
+              pre_releases=False,
+              cert=None,
+              allow_all_external=False,
+              allow_external=None,
+              allow_unverified=None,
+              process_dependency_links=False):
     '''
     Make sure the package is installed
 
@@ -144,6 +149,10 @@ def installed(name,
 
     This will install the latest Django version greater than 1.6 but less
     than 1.7.
+
+    requirements
+        Path to a pip requirements file. If the path begins with salt://
+        the file will be transferred from the master file server.
 
     user
         The user under which to run pip
@@ -422,6 +431,11 @@ def installed(name,
         cwd=cwd,
         activate=activate,
         pre_releases=pre_releases,
+        cert=cert,
+        allow_all_external=allow_all_external,
+        allow_external=allow_external,
+        allow_unverified=allow_unverified,
+        process_dependency_links=process_dependency_links,
         saltenv=__env__
     )
 
@@ -431,9 +445,16 @@ def installed(name,
         if requirements or editable:
             comments = []
             if requirements:
+                for eachline in pip_install_call.get('stdout', '').split('\n'):
+                    if not eachline.startswith('Requirement already satisfied') and eachline != 'Cleaning up...':
+                        ret['changes']['requirements'] = True
+                if ret['changes'].get('requirements'):
+                    comments.append('Successfully processed requirements file '
+                                    '{0}.'.format(requirements))
+                else:
+                    comments.append('Requirements was successfully installed')
                 comments.append('Successfully processed requirements file '
                                 '{0}.'.format(requirements))
-                ret['changes']['requirements'] = True
             if editable:
                 comments.append('Package successfully installed from VCS '
                                 'checkout {0}.'.format(editable))

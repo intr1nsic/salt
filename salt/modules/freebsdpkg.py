@@ -9,7 +9,7 @@ Remote package support using ``pkg_add(1)``
     pkgng local database and, if found,  would provide some of pkgng's
     functionality. The rewrite of this module has removed all pkgng support,
     and moved it to the :mod:`pkgng <salt.modules.pkgng>` execution module. For
-    verisions <= 0.17.0, the documentation here should not be considered
+    versions <= 0.17.0, the documentation here should not be considered
     accurate. If your Minion is running one of these versions, then the
     documentation for this module can be viewed using the :mod:`sys.doc
     <salt.modules.sys.doc>` function:
@@ -192,7 +192,7 @@ def version(*names, **kwargs):
         Return a nested dictionary containing both the origin name and version
         for each specified package.
 
-        .. versionadded:: 2014.1.0 (Hydrogen)
+        .. versionadded:: 2014.1.0
 
 
     CLI Example:
@@ -240,7 +240,7 @@ def list_pkgs(versions_as_list=False, with_origin=False, **kwargs):
         Return a nested dictionary containing both the origin name and version
         for each installed package.
 
-        .. versionadded:: 2014.1.0 (Hydrogen)
+        .. versionadded:: 2014.1.0
 
     CLI Example:
 

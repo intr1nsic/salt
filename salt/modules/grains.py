@@ -88,7 +88,7 @@ def get(key, default='', delim=':'):
 
         salt '*' grains.get pkg:apache
     '''
-    return salt.utils.traverse_dict(__grains__, key, default, delim)
+    return salt.utils.traverse_dict_and_list(__grains__, key, default, delim)
 
 
 def has_value(key):
@@ -109,7 +109,7 @@ def has_value(key):
 
         salt '*' grains.has_value pkg:apache
     '''
-    return True if salt.utils.traverse_dict(__grains__, key, False) else False
+    return True if salt.utils.traverse_dict_and_list(__grains__, key, False) else False
 
 
 def items(sanitize=False):
@@ -280,7 +280,7 @@ def append(key, val, convert=False):
 
         salt '*' grains.append key val
     '''
-    grains = get(key)
+    grains = get(key, [])
     if not isinstance(grains, list) and convert is True:
         grains = [grains]
     if not isinstance(grains, list):
@@ -407,7 +407,7 @@ def filter_by(lookup_dict, grain='os_family', merge=None, default='default'):
     :param default: default lookup_dict's key used if the grain does not exists
          or if the grain value has no match on lookup_dict.
 
-         .. versionadded:: 2014.1.0 (Hydrogen)
+         .. versionadded:: 2014.1.0
 
     CLI Example:
 
@@ -473,7 +473,7 @@ def get_or_set_hash(name,
           mysql_user:
             - present
             - host: localhost
-            - password: {{ grains.get_or_set_hash('mysql:some_mysql_user') }}
+            - password: {{ salt['grains.get_or_set_hash']('mysql:some_mysql_user') }}
 
     CLI Example:
 

@@ -2,7 +2,6 @@
 
 # Import Python libs
 import os
-from collections import OrderedDict
 from imp import find_module
 
 # Import Salt Testing libs
@@ -10,12 +9,30 @@ from salttesting import TestCase, skipIf
 from salttesting.helpers import ensure_in_syspath
 from salttesting.mock import patch, Mock, NO_MOCK, NO_MOCK_REASON
 
-ensure_in_syspath('../')
+ensure_in_syspath('../../')
 
 # Import Salt libs
 import salt.loader
 import salt.config
+import salt.utils
 from salt.state import HighState
+from integration import TMP
+
+try:
+    from collections import OrderedDict
+    OD_AVAILABLE = True
+except ImportError:
+    OD_AVAILABLE = False
+
+GPG_KEYDIR = os.path.join(TMP, 'gpg-keydir')
+
+# The keyring library uses `getcwd()`, let's make sure we in a good directory
+# before importing keyring
+if not os.path.isdir(GPG_KEYDIR):
+    os.makedirs(GPG_KEYDIR)
+
+os.chdir(GPG_KEYDIR)
+
 
 OPTS = salt.config.minion_config(None)
 OPTS['state_events'] = False
@@ -24,19 +41,22 @@ OPTS['file_client'] = 'local'
 OPTS['file_roots'] = dict(base=['/tmp'])
 OPTS['test'] = False
 OPTS['grains'] = salt.loader.grains(OPTS)
-OPTS['gpg_keydir'] = os.getcwd()
+OPTS['gpg_keydir'] = GPG_KEYDIR
 
-ENCRYPTED_STRING = """
+ENCRYPTED_STRING = '''
 -----BEGIN PGP MESSAGE-----
 I AM SO SECRET!
 -----END PGP MESSAGE-----
-"""
-DECRYPTED_STRING = "I am not a secret anymore"
+'''
+DECRYPTED_STRING = 'I am not a secret anymore'
 SKIP = False
 
 try:
     find_module('gnupg')
 except ImportError:
+    SKIP = True
+
+if salt.utils.which('gpg') is None:
     SKIP = True
 
 
@@ -62,10 +82,11 @@ class GPGTestCase(TestCase):
         decrypted_data_mock.__str__ = lambda x: DECRYPTED_STRING
         return decrypted_data_mock
 
+    @skipIf(not OD_AVAILABLE, 'OrderedDict not available. Skipping.')
     def make_nested_object(self, s):
         return OrderedDict([
             ('array_key', [1, False, s]),
-            ('string_key', "A Normal String"),
+            ('string_key', 'A Normal String'),
             ('dict_key', {1: None}),
         ])
 

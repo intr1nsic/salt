@@ -23,7 +23,7 @@ def _auth():
     '''
     Return the auth object
     '''
-    if not 'auth' in __context__:
+    if 'auth' not in __context__:
         __context__['auth'] = salt.crypt.SAuth(__opts__)
     return __context__['auth']
 
@@ -60,7 +60,7 @@ def _mk_client():
     '''
     Create a file client and add it to the context
     '''
-    if not 'cp.fileclient' in __context__:
+    if 'cp.fileclient' not in __context__:
         __context__['cp.fileclient'] = \
                 salt.fileclient.get_file_client(__opts__)
 
@@ -195,13 +195,13 @@ def get_template(path,
         saltenv = env
 
     _mk_client()
-    if not 'salt' in kwargs:
+    if 'salt' not in kwargs:
         kwargs['salt'] = __salt__
-    if not 'pillar' in kwargs:
+    if 'pillar' not in kwargs:
         kwargs['pillar'] = __pillar__
-    if not 'grains' in kwargs:
+    if 'grains' not in kwargs:
         kwargs['grains'] = __grains__
-    if not 'opts' in kwargs:
+    if 'opts' not in kwargs:
         kwargs['opts'] = __opts__
     return __context__['cp.fileclient'].get_template(
             path,
@@ -290,7 +290,8 @@ def get_file_str(path, saltenv='base', env=None):
 
 def cache_file(path, saltenv='base', env=None):
     '''
-    Used to cache a single file in the local salt-master file cache.
+    Used to cache a single file on the salt-minion
+    Returns the location of the new cached file on the minion
 
     CLI Example:
 
@@ -639,10 +640,13 @@ def push(path):
 
         salt '*' cp.push /etc/fstab
     '''
+    log.debug('Trying to copy {0!r} to master'.format(path))
     if '../' in path or not os.path.isabs(path):
+        log.debug('Path must be absolute, returning False')
         return False
     path = os.path.realpath(path)
     if not os.path.isfile(path):
+        log.debug('Path failed os.path.isfile check, returning False')
         return False
     auth = _auth()
 

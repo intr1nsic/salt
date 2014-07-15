@@ -16,6 +16,7 @@ import optparse
 import subprocess
 import tempfile
 import shutil
+import sys
 
 # Import salt libs
 import salt
@@ -35,6 +36,11 @@ def parse():
             default=5,
             type='int',
             help='The number of minions to make')
+    parser.add_option('-M',
+            action='store_true',
+            dest='master_too',
+            default=False,
+            help='Run a local master and tell the minions to connect to it')
     parser.add_option('--master',
             dest='master',
             default='salt',
@@ -66,6 +72,10 @@ def parse():
             dest='root_dir',
             default=None,
             help='Override the minion root_dir config')
+    parser.add_option('--transport',
+            dest='transport',
+            default='zeromq',
+            help='Declare which transport to use, default is zeromq')
     parser.add_option(
             '-c', '--config-dir', default='/etc/salt',
             help=('Pass in an alternative configuration directory. Default: '
@@ -89,6 +99,7 @@ class Swarm(object):
     '''
     def __init__(self, opts):
         self.opts = opts
+        self.raet_port = 4550
 
         # If given a root_dir, keep the tmp files there as well
         if opts['root_dir']:
@@ -99,7 +110,8 @@ class Swarm(object):
         self.swarm_root = tempfile.mkdtemp(prefix='mswarm-root', suffix='.d',
             dir=tmpdir)
 
-        self.pki = self._pki_dir()
+        if self.opts['transport'] == 'zeromq':
+            self.pki = self._pki_dir()
         self.__zfill = len(str(self.opts['minions']))
 
         self.confs = set()
@@ -133,21 +145,28 @@ class Swarm(object):
         dpath = os.path.join(self.swarm_root, minion_id)
         os.makedirs(dpath)
 
-        minion_pkidir = os.path.join(dpath, 'pki')
-        os.makedirs(minion_pkidir)
-        minion_pem = os.path.join(self.pki, 'minion.pem')
-        minion_pub = os.path.join(self.pki, 'minion.pub')
-        shutil.copy(minion_pem, minion_pkidir)
-        shutil.copy(minion_pub, minion_pkidir)
-
         data = {
             'id': minion_id,
             'user': self.opts['user'],
-            'pki_dir': minion_pkidir,
             'cachedir': os.path.join(dpath, 'cache'),
             'master': self.opts['master'],
             'log_file': os.path.join(dpath, 'minion.log')
         }
+
+        if self.opts['transport'] == 'zeromq':
+            minion_pkidir = os.path.join(dpath, 'pki')
+            os.makedirs(minion_pkidir)
+            minion_pem = os.path.join(self.pki, 'minion.pem')
+            minion_pub = os.path.join(self.pki, 'minion.pub')
+            shutil.copy(minion_pem, minion_pkidir)
+            shutil.copy(minion_pub, minion_pkidir)
+            data['pki_dir'] = minion_pkidir
+        elif self.opts['transport'] == 'raet':
+            data['transport'] = 'raet'
+            data['sock_dir'] = os.path.join(dpath, 'sock')
+            data['raet_port'] = self.raet_port
+            data['pki_dir'] = os.path.join(dpath, 'pki')
+            self.raet_port += 1
 
         if self.opts['root_dir']:
             data['root_dir'] = self.opts['root_dir']
@@ -208,10 +227,13 @@ class Swarm(object):
 
     def start(self):
         '''
-        Start the minions!!
+        Start the magic!!
         '''
-        print('Starting minions...')
         self.prep_configs()
+        if self.opts['master_too']:
+            master_swarm = MasterSwarm(self.opts)
+            master_swarm.start()
+        print('Starting minions...')
         self.start_minions()
         print('All {0} minions have started.'.format(self.opts['minions']))
         print('Waiting for CTRL-C to properly shutdown minions...')
@@ -229,10 +251,74 @@ class Swarm(object):
             'pkill -KILL -f "python.*salt-minion"',
             shell=True
         )
+        if self.opts['master_too']:
+            print('Killing any remaining masters')
+            subprocess.call(
+                    'pkill -KILL -f "python.*salt-master"',
+                    shell=True
+            )
         if not self.opts['no_clean']:
             print('Remove ALL related temp files/directories')
             shutil.rmtree(self.swarm_root)
         print('Done')
+
+
+class MasterSwarm(Swarm):
+    '''
+    Create one or more masters
+    '''
+    def start(self):
+        '''
+        Prep the master start and fire it off
+        '''
+        # sys.stdout for no newline
+        sys.stdout.write('Generating master config...')
+        self.mkconf()
+        print('done')
+
+        sys.stdout.write('Starting master...')
+        self.start_master()
+        print('done')
+
+    def start_master(self):
+        '''
+        Do the master start
+        '''
+        cmd = 'salt-master -c {0} --pid-file {1}'.format(
+                self.config,
+                '{0}.pid'.format(self.config)
+                )
+        if self.opts['foreground']:
+            cmd += ' -l debug &'
+        else:
+            cmd += ' -d &'
+        subprocess.call(cmd, shell=True)
+
+    def mkconf(self):  # pylint: disable=W0221
+        '''
+        Make a master config and write it'
+        '''
+        dpath = os.path.join(self.swarm_root, 'master')
+        data = {
+            'log_file': os.path.join(dpath, 'master.log'),
+            'open_mode': True  # TODO Pre-seed keys
+        }
+
+        os.makedirs(dpath)
+        path = os.path.join(dpath, 'master')
+
+        with open(path, 'w+') as fp_:
+            yaml.dump(data, fp_)
+        self.config = dpath
+
+    def shutdown(self):
+        print('Killing master')
+        subprocess.call(
+                'pkill -KILL -f "python.*salt-master"',
+                shell=True
+        )
+        print('Master killed')
+
 
 if __name__ == '__main__':
     swarm = Swarm(parse())

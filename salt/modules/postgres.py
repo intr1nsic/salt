@@ -202,9 +202,8 @@ def _psql_cmd(*args, **kwargs):
 
     cmd = [salt.utils.which('psql'),
            '--no-align',
-           '--no-readline']
-    if password is None:
-        cmd += ['--no-password']
+           '--no-readline',
+           '--no-password']         # It is never acceptable to issue a password prompt.
     if user:
         cmd += ['--username', user]
     if host:
@@ -239,7 +238,11 @@ def psql_query(query, user=None, host=None, port=None, maintenance_db=None,
                password=None, runas=None):
     '''
     Run an SQL-Query and return the results as a list. This command
-    only supports SELECT statements.
+    only supports SELECT statements.  This limitation can be worked around
+    with a query like this:
+
+    WITH updated AS (UPDATE pg_authid SET rolconnlimit = 2000 WHERE
+    rolname = 'rolename' RETURNING rolconnlimit) SELECT * FROM updated;
 
     CLI Example:
 
@@ -391,7 +394,7 @@ def db_alter(name, user=None, host=None, port=None, maintenance_db=None,
              password=None, tablespace=None, owner=None,
              runas=None):
     '''
-    Change tablesbase or/and owner of databse.
+    Change tablespace or/and owner of database.
 
     CLI Example:
 

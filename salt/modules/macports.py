@@ -130,7 +130,7 @@ def latest_version(*names, **kwargs):
     ret = {}
 
     for k, v in available.items():
-        if not k in installed or salt.utils.compare_versions(ver1=installed[k], oper='<', ver2=v):
+        if k not in installed or salt.utils.compare_versions(ver1=installed[k], oper='<', ver2=v):
             ret[k] = v
         else:
             ret[k] = ''
@@ -201,7 +201,7 @@ def install(name=None, refresh=False, pkgs=None, **kwargs):
             salt '*' pkg.install <package name>
 
     version
-        Specify a version to pkg to install. Ignored if pkgs is sepcified.
+        Specify a version to pkg to install. Ignored if pkgs is specified.
 
         CLI Example:
 
@@ -211,7 +211,7 @@ def install(name=None, refresh=False, pkgs=None, **kwargs):
             salt '*' pkg.install git-core version='1.8.5.5'
 
     variant
-        Specify a variant to pkg to install. Ignored if pkgs is sepcified.
+        Specify a variant to pkg to install. Ignored if pkgs is specified.
 
         CLI Example:
 

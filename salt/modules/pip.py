@@ -73,6 +73,9 @@ def _get_cached_requirements(requirements, saltenv):
 
 
 def _get_env_activate(bin_env):
+    '''
+    Return the path to the activate binary
+    '''
     if not bin_env:
         raise CommandNotFoundError('Could not find a `activate` binary')
 
@@ -86,7 +89,7 @@ def _get_env_activate(bin_env):
     raise CommandNotFoundError('Could not find a `activate` binary')
 
 
-def install(pkgs=None,
+def install(pkgs=None,  # pylint: disable=R0912,R0913,R0914
             requirements=None,
             env=None,
             bin_env=None,
@@ -120,6 +123,11 @@ def install(pkgs=None,
             cwd=None,
             activate=False,
             pre_releases=False,
+            cert=None,
+            allow_all_external=False,
+            allow_external=None,
+            allow_unverified=None,
+            process_dependency_links=False,
             __env__=None,
             saltenv='base'):
     '''
@@ -129,17 +137,17 @@ def install(pkgs=None,
     packages globally or to a virtualenv.
 
     pkgs
-        comma separated list of packages to install
+        Comma separated list of packages to install
     requirements
-        path to requirements
+        Path to requirements
     bin_env
-        path to pip bin or path to virtualenv. If doing a system install,
+        Path to pip bin or path to virtualenv. If doing a system install,
         and want to use a specific pip bin (pip-2.7, pip-2.6, etc..) just
         specify the pip bin you want.
         If installing into a virtualenv, just use the path to the virtualenv
         (/home/code/path/to/virtualenv/)
     env
-        deprecated, use bin_env now
+        Deprecated, use bin_env now
     use_wheel
         Prefer wheel archives (requires pip>=1.4)
     log
@@ -184,7 +192,7 @@ def install(pkgs=None,
     ignore_installed
         Ignore the installed packages (reinstalling instead)
     exists_action
-        Default action when a path already exists: (s)witch, (i)gnore, (w)wipe,
+        Default action when a path already exists: (s)witch, (i)gnore, (w)ipe,
         (b)ackup
     no_deps
         Ignore package dependencies
@@ -221,7 +229,16 @@ def install(pkgs=None,
         before running install.
     pre_releases
         Include pre-releases in the available versions
-
+    cert
+        Provide a path to an alternate CA bundle
+    allow_all_external
+        Allow the installation of all externally hosted files
+    allow_external
+        Allow the installation of externally hosted files (comma separated list)
+    allow_unverified
+        Allow the installation of insecure and unverifiable files (comma separated list)
+    process_dependency_links
+        Enable the processing of dependency links
 
     CLI Example:
 
@@ -234,7 +251,8 @@ def install(pkgs=None,
 
     Complicated CLI example::
 
-        salt '*' pip.install markdown,django editable=git+https://github.com/worldcompany/djangoembed.git#egg=djangoembed upgrade=True no_deps=True
+        salt '*' pip.install markdown,django \
+                editable=git+https://github.com/worldcompany/djangoembed.git#egg=djangoembed upgrade=True no_deps=True
 
     '''
     # Switching from using `pip_bin` and `env` to just `bin_env`
@@ -244,6 +262,11 @@ def install(pkgs=None,
     # but going fwd you should specify either a pip bin or an env with
     # the `bin_env` argument and we'll take care of the rest.
     if env and not bin_env:
+        salt.utils.warn_until(
+                'Boron',
+                'Passing \'env\' to the pip module is deprecated. Use bin_env instead. '
+                'This functionality will be removed in Salt Boron.'
+        )
         bin_env = env
 
     if isinstance(__env__, string_types):
@@ -448,6 +471,9 @@ def install(pkgs=None,
         if salt.utils.compare_versions(ver1=pip_version, oper='>=', ver2='1.4'):
             cmd.append('--pre')
 
+    if cert:
+        cmd.append('--cert={0}'.format(cert))
+
     if global_options:
         if isinstance(global_options, string_types):
             global_options = [go.strip() for go in global_options.split(',')]
@@ -491,6 +517,26 @@ def install(pkgs=None,
                     )
             cmd.append('--editable={0}'.format(entry))
 
+    if allow_all_external:
+        cmd.append('--allow-all-external')
+
+    if allow_external:
+        if isinstance(allow_external, string_types):
+            allow_external = [p.strip() for p in allow_external.split(',')]
+
+        for pkg in allow_external:
+            cmd.append('--allow-external {0}'.format(pkg))
+
+    if allow_unverified:
+        if isinstance(allow_unverified, string_types):
+            allow_unverified = [p.strip() for p in allow_unverified.split(',')]
+
+        for pkg in allow_unverified:
+            cmd.append('--allow-unverified {0}'.format(pkg))
+
+    if process_dependency_links:
+        cmd.append('--process-dependency-links')
+
     try:
         cmd_kwargs = dict(runas=user, cwd=cwd, saltenv=saltenv)
         if bin_env and os.path.isdir(bin_env):
@@ -500,7 +546,7 @@ def install(pkgs=None,
         for requirement in cleanup_requirements:
             try:
                 os.remove(requirement)
-            except Exception:
+            except OSError:
                 pass
 
 
@@ -668,7 +714,7 @@ def uninstall(pkgs=None,
         for requirement in cleanup_requirements:
             try:
                 os.remove(requirement)
-            except Exception:
+            except OSError:
                 pass
 
 

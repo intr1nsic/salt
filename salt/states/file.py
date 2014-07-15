@@ -6,11 +6,12 @@ Operations on regular files, special files, directories, and symlinks
 Salt States can aggressively manipulate files on a system. There are a number
 of ways in which files can be managed.
 
-Regular files can be enforced with the ``managed`` function. This function
-downloads files from the salt master and places them on the target system.
-The downloaded files can be rendered as a jinja, mako, or wempy template,
-adding a dynamic component to file management. An example of ``file.managed``
-which makes use of the jinja templating system would look like this:
+Regular files can be enforced with the :mod:`file.managed
+<salt.states.file.managed>` state. This state downloads files from the salt
+master and places them on the target system. Managed files can be rendered as a
+jinja, mako, or wempy template, adding a dynamic component to file management.
+An example of :mod:`file.managed <salt.states.file.managed>` which makes use of
+the jinja templating system would look like this:
 
 .. code-block:: yaml
 
@@ -28,6 +29,17 @@ which makes use of the jinja templating system would look like this:
         - context:
             custom_var: "override"
     {% endif %}
+
+It is also possible to use the :mod:`py renderer <salt.renderers.py>` as a
+templating option. The template would be a python script which would need to
+contain a function called ``run()``, which returns a string. The returned
+string will be the contents of the managed file. For example:
+
+.. code-block:: python
+
+    def run():
+        lines = ('foo', 'bar', 'baz')
+        return '\\n\\n'.join(lines)
 
 .. note::
 
@@ -222,22 +234,21 @@ A more complex ``recurse`` example:
 '''
 
 # Import python libs
-import os
-import shutil
 import difflib
-import logging
 import json
+import logging
+import os
 import pprint
+import shutil
 import traceback
-
-# Import third party libs
 import yaml
 
 # Import salt libs
 import salt.utils
 import salt.utils.templates
 from salt.exceptions import CommandExecutionError
-from salt.utils.yamldumper import OrderedDumper
+from salt.utils.serializers import yaml as yaml_serializer
+from salt.utils.serializers import json as json_serializer
 from salt._compat import string_types, integer_types
 
 log = logging.getLogger(__name__)
@@ -408,7 +419,7 @@ def _check_directory(name,
                 fchange = {}
                 path = os.path.join(root, fname)
                 stats = __salt__['file.stats'](
-                    path, 'md5', follow_symlinks=False
+                    path, None, follow_symlinks=False
                 )
                 if user is not None and user != stats.get('user'):
                     fchange['user'] = user
@@ -633,7 +644,7 @@ def _get_template_texts(source_list=None,
             source,
             '',
             template=template,
-            env=__env__,
+            saltenv=__env__,
             context=tmpctx,
             **kwargs
         )
@@ -968,7 +979,8 @@ def managed(name,
             create=True,
             contents=None,
             contents_pillar=None,
-            contents_pillar_newline=True,
+            contents_grains=None,
+            contents_newline=True,
             follow_symlinks=True,
             check_cmd=None,
             **kwargs):
@@ -1003,7 +1015,9 @@ def managed(name,
 
         The function accepts the first encountered long unbroken alphanumeric
         string of correct length as a valid hash, in order from most secure to
-        least secure::
+        least secure:
+
+        .. code-block:: text
 
             Type    Length
             ======  ======
@@ -1021,7 +1035,9 @@ def managed(name,
 
         Debian file type ``*.dsc`` is supported.
 
-        Examples::
+        Examples:
+
+        .. code-block:: text
 
             /etc/rc.conf ef6e82e4006dee563d98ada2a2a80a27
             sha254c8525aee419eb649f0233be91c151178b30f0dff8ebbdcc8de71b1d5c8bcc06a  /etc/resolv.conf
@@ -1140,12 +1156,17 @@ def managed(name,
             pipe character, and the mutliline string is indented two more
             spaces.
 
-    contents_pillar_newline
+    contents_grains
         .. versionadded:: Helium
 
-        When using content_pillar, a newline is inserted into the data gathered
-        from pillar. When loading some data this newline is better left off.
-        Setting contents_pillar_newline to False will omit this newline.
+        Same as contents_pillar, but with grains
+
+    contents_newline
+        .. versionadded:: Helium
+
+        When using contents, contents_pillar, or contents_grains, a newline is
+        inserted into the data. When loading some data this newline is better
+        left off.  Setting contents_newline to False will omit this newline.
 
     follow_symlinks : True
         .. versionadded:: Helium
@@ -1164,11 +1185,11 @@ def managed(name,
 
     # If no source is specified, set replace to False, as there is nothing
     # to replace the file with.
-    src_defined = source or contents or contents_pillar
+    src_defined = source or contents or contents_pillar or contents_grains
     if not src_defined and replace:
         replace = False
         log.warning(
-            'Neither \'source\' nor \'contents\' nor \'contents_pillar\' '
+            'Neither \'source\' nor \'contents\' nor \'contents_pillar\' nor \'contents_grains\' '
             'was defined, yet \'replace\' was set to \'True\'. As there is '
             'no source to replace the file with, \'replace\' has been set '
             'to \'False\' to avoid reading the file unnecessarily'.format(name)
@@ -1204,7 +1225,7 @@ def managed(name,
         msg = (
             'Passing a salt environment should be done using \'saltenv\' not '
             '\'env\'. This warning will go away in Salt Boron and this '
-            'will be the default and expected behaviour. Please update your '
+            'will be the default and expected behavior. Please update your '
             'state files.'
         )
         salt.utils.warn_until('Boron', msg)
@@ -1222,17 +1243,21 @@ def managed(name,
         return _error(
             ret, 'Context must be formed as a dict')
 
-    if contents and contents_pillar:
+    if len(filter(None, [contents, contents_pillar, contents_grains])) > 1:
         return _error(
-            ret, 'Only one of contents and contents_pillar is permitted')
+            ret, 'Only one of contents, contents_pillar, and contents_grains is permitted')
 
     # If contents_pillar was used, get the pillar data
     if contents_pillar:
         contents = __salt__['pillar.get'](contents_pillar)
-        if contents_pillar_newline:
-            # Make sure file ends in newline
-            if not contents.endswith('\n'):
-                contents += '\n'
+
+    if contents_grains:
+        contents = __salt__['grains.get'](contents_grains)
+
+    if contents_newline:
+        # Make sure file ends in newline
+        if contents and not contents.endswith('\n'):
+            contents += '\n'
 
     if not replace and os.path.exists(name):
         # Check and set the permissions if necessary
@@ -1389,6 +1414,8 @@ def directory(name,
               require=None,
               exclude_pat=None,
               follow_symlinks=False,
+              force=False,
+              backupname=None,
               **kwargs):
     '''
     Ensure that a named directory is present and has the right perms
@@ -1406,7 +1433,9 @@ def directory(name,
 
     recurse
         Enforce user/group ownership and mode of directory recursively. Accepts
-        a list of strings representing what you would like to recurse.
+        a list of strings representing what you would like to recurse.  If
+        'mode' is defined, will recurse on both 'file_mode' and 'dir_mode' if
+        they are defined.
         Example:
 
         .. code-block:: yaml
@@ -1427,7 +1456,7 @@ def directory(name,
         Windows
 
     file_mode
-        The permissions mode to set any files created if 'mode' is ran in
+        The permissions mode to set any files created if 'mode' is run in
         'recurse'. This defaults to dir_mode. Not supported on Windows
 
     makedirs
@@ -1454,6 +1483,24 @@ def directory(name,
         permissions of the directory/file to which the symlink points.
 
         .. versionadded:: 2014.1.4
+
+    force
+        If the name of the directory exists and is not a direcotry and
+        force is set to False, the state will fail. If force is set to
+        True, the file in the way of the directory will be deleted to
+        make room for the directory, unless backupname is set,
+        then it will be renamed.
+
+        .. versionadded:: Helium
+
+    backupname
+        If the name of the directory exists and is not a directory, it will be
+        renamed to the backupname. If the backupname already
+        exists and force is False, the state will fail. Otherwise, the
+        backupname will be removed first.
+
+        .. versionadded:: Helium
+
     '''
     # Remove trailing slash, if present
     if name[-1] == '/':
@@ -1490,8 +1537,33 @@ def directory(name,
         return _error(
             ret, 'Specified file {0} is not an absolute path'.format(name))
     if os.path.isfile(name):
-        return _error(
-            ret, 'Specified location {0} exists and is a file'.format(name))
+        if backupname is not None:
+            # Make a backup first
+            if os.path.lexists(backupname):
+                if not force:
+                    return _error(ret, ((
+                        'File exists where the backup target {0} should go'
+                    ).format(backupname)))
+                elif os.path.isfile(backupname):
+                    os.remove(backupname)
+                elif os.path.isdir(backupname):
+                    shutil.rmtree(backupname)
+                else:
+                    return _error(ret, ((
+                        'Something exists where the backup target {0}'
+                        'should go'
+                    ).format(backupname)))
+            os.rename(name, backupname)
+        elif force:
+            # Remove whatever is in the way
+            if os.path.isfile(name):
+                os.remove(name)
+                ret['changes']['forced'] = 'File was forcibly replaced'
+            else:
+                shutil.rmtree(name)
+        else:
+            return _error(
+                ret, 'Specified location {0} exists and is a file'.format(name))
     if __opts__['test']:
         ret['result'], ret['comment'] = _check_directory(
             name,
@@ -1764,13 +1836,6 @@ def recurse(name,
         'comment': {}  # { path: [comment, ...] }
     }
 
-    try:
-        source = source.rstrip('/')
-    except AttributeError:
-        ret['result'] = False
-        ret['comment'] = '\'source\' parameter must be a string'
-        return ret
-
     if 'mode' in kwargs:
         ret['result'] = False
         ret['comment'] = (
@@ -1795,7 +1860,7 @@ def recurse(name,
         msg = (
             'Passing a salt environment should be done using \'saltenv\' not '
             '\'env\'. This warning will go away in Salt Boron and this '
-            'will be the default and expected behaviour. Please update your '
+            'will be the default and expected behavior. Please update your '
             'state files.'
         )
         salt.utils.warn_until('Boron', msg)
@@ -1821,12 +1886,33 @@ def recurse(name,
                               .format(precheck))
             return ret
 
+    if isinstance(source, list):
+        sources = source
+    else:
+        sources = [source]
+
+    try:
+        for idx, val in enumerate(sources):
+            sources[idx] = val.rstrip('/')
+    except AttributeError:
+        ret['result'] = False
+        ret['comment'] = '\'source\' parameter(s) must be a string'
+        return ret
+
     # If source is a list, find which in the list actually exists
     try:
-        source, source_hash = __salt__['file.source_list'](source, '', __env__)
+        source, source_hash = __salt__['file.source_list'](sources, '', __env__)
     except CommandExecutionError as exc:
         ret['result'] = False
         ret['comment'] = 'Recurse failed: {0}'.format(exc)
+        return ret
+
+    try:
+        for idx, val in enumerate(sources):
+            sources[idx] = val.rstrip('/')
+    except AttributeError:
+        ret['result'] = False
+        ret['comment'] = '\'source\' parameter must be a string'
         return ret
 
     # Check source path relative to fileserver root, make sure it is a
@@ -1890,7 +1976,7 @@ def recurse(name,
 
         # Conflicts can occur if some kwargs are passed in here
         pass_kwargs = {}
-        faults = ['mode', 'makedirs', 'replace']
+        faults = ['mode', 'makedirs']
         for key in kwargs:
             if key not in faults:
                 pass_kwargs[key] = kwargs[key]
@@ -1904,7 +1990,6 @@ def recurse(name,
             template=template,
             makedirs=True,
             context=context,
-            replace=True,
             defaults=defaults,
             backup=backup,
             **pass_kwargs)
@@ -2157,11 +2242,11 @@ def blockreplace(
     :param name: Filesystem path to the file to be edited
     :param marker_start: The line content identifying a line as the start of
         the content block. Note that the whole line containing this marker will
-        be considered, so whitespaces or extra content before or after the
+        be considered, so whitespace or extra content before or after the
         marker is included in final output
     :param marker_end: The line content identifying a line as the end of
         the content block. Note that the whole line containing this marker will
-        be considered, so whitespaces or extra content before or after the
+        be considered, so whitespace or extra content before or after the
         marker is included in final output.
         Note: you can use file.accumulated and target this state. All
         accumulated data dictionaries content will be added as new lines in the
@@ -2180,7 +2265,9 @@ def blockreplace(
 
     :rtype: bool or str
 
-     Example of usage with an accumulator and with a variable::
+    Example of usage with an accumulator and with a variable:
+
+    .. code-block:: yaml
 
         {% set myvar = 42 %}
         hosts-config-block-{{ myvar }}:
@@ -2211,7 +2298,9 @@ def blockreplace(
             - require_in:
               - file: hosts-config-block-{{ myvar }}
 
-    will generate and maintain a block of content in ``/etc/hosts``::
+    will generate and maintain a block of content in ``/etc/hosts``:
+
+    .. code-block:: text
 
         # START managed zone 42 -DO-NOT-EDIT-
         First line of content
@@ -2310,7 +2399,9 @@ def sed(name,
 
         .. versionadded:: 0.17.0
 
-    Usage::
+    Usage:
+
+    .. code-block:: yaml
 
         # Disable the epel repo by default
         /etc/yum.repos.d/epel.repo:
@@ -2423,7 +2514,9 @@ def comment(name, regex, char='#', backup='.bak'):
             ``uncomment`` is called. Meaning the backup will only be useful
             after the first invocation.
 
-    Usage::
+    Usage:
+
+    .. code-block:: yaml
 
         /etc/fstab:
           file.comment:
@@ -2501,7 +2594,9 @@ def uncomment(name, regex, char='#', backup='.bak'):
         **WARNING:** each time ``sed``/``comment``/``uncomment`` is called will
         overwrite this backup
 
-    Usage::
+    Usage:
+
+    .. code-block:: yaml
 
         /etc/adduser.conf:
           file.uncomment:
@@ -2616,7 +2711,9 @@ def append(name,
 
         The function accepts the first encountered long unbroken alphanumeric
         string of correct length as a valid hash, in order from most secure to
-        least secure::
+        least secure:
+
+        .. code-block:: text
 
             Type    Length
             ======  ======
@@ -2634,7 +2731,9 @@ def append(name,
 
         Debian file type ``*.dsc`` is supported.
 
-        Examples::
+        Examples:
+
+        .. code-block:: text
 
             /etc/rc.conf ef6e82e4006dee563d98ada2a2a80a27
             sha254c8525aee419eb649f0233be91c151178b30f0dff8ebbdcc8de71b1d5c8bcc06a  /etc/resolv.conf
@@ -2672,7 +2771,9 @@ def append(name,
     context
         Overrides default context variables passed to the template.
 
-    Multi-line example::
+    Multi-line example:
+
+    .. code-block:: yaml
 
         /etc/motd:
           file.append:
@@ -2681,7 +2782,9 @@ def append(name,
                 than sugar with the Courtiers of Italy.
                 - Benjamin Franklin
 
-    Multiple lines of text::
+    Multiple lines of text:
+
+    .. code-block:: yaml
 
         /etc/motd:
           file.append:
@@ -2689,7 +2792,9 @@ def append(name,
               - Trust no one unless you have eaten much salt with him.
               - "Salt is born of the purest of parents: the sun and the sea."
 
-    Gather text from multiple template files::
+    Gather text from multiple template files:
+
+    .. code-block:: yaml
 
         /etc/motd:
           file:
@@ -2829,22 +2934,24 @@ def append(name,
 
 
 def prepend(name,
-           text=None,
-           makedirs=False,
-           source=None,
-           source_hash=None,
-           template='jinja',
-           sources=None,
-           source_hashes=None,
-           defaults=None,
-           context=None):
+            text=None,
+            makedirs=False,
+            source=None,
+            source_hash=None,
+            template='jinja',
+            sources=None,
+            source_hashes=None,
+            defaults=None,
+            context=None):
     '''
     Ensure that some text appears at the beginning of a file
 
     The text will not be prepended again if it already exists in the file. You
     may specify a single line of text or a list of lines to append.
 
-    Multi-line example::
+    Multi-line example:
+
+    .. code-block:: yaml
 
         /etc/motd:
           file.prepend:
@@ -2853,7 +2960,9 @@ def prepend(name,
                 than sugar with the Courtiers of Italy.
                 - Benjamin Franklin
 
-    Multiple lines of text::
+    Multiple lines of text:
+
+    .. code-block:: yaml
 
         /etc/motd:
           file.prepend:
@@ -2861,7 +2970,9 @@ def prepend(name,
               - Trust no one unless you have eaten much salt with him.
               - "Salt is born of the purest of parents: the sun and the sea."
 
-    Gather text from multiple template files::
+    Gather text from multiple template files:
+
+    .. code-block:: yaml
 
         /etc/motd:
           file:
@@ -3028,7 +3139,9 @@ def patch(name,
         by the ``source`` parameter. If not provided, this defaults to the
         environment from which the state is being executed.
 
-    Usage::
+    Usage:
+
+    .. code-block:: yaml
 
         # Equivalent to ``patch --forward /opt/file.txt file.patch``
         /opt/file.txt:
@@ -3053,7 +3166,7 @@ def patch(name,
         msg = (
             'Passing a salt environment should be done using \'saltenv\' not '
             '\'env\'. This warning will go away in Salt Boron and this '
-            'will be the default and expected behaviour. Please update your '
+            'will be the default and expected behavior. Please update your '
             'state files.'
         )
         salt.utils.warn_until('Boron', msg)
@@ -3122,7 +3235,9 @@ def touch(name, atime=None, mtime=None, makedirs=False):
         whether we should create the parent directory/directories in order to
         touch the file
 
-    Usage::
+    Usage:
+
+    .. code-block:: yaml
 
         /var/log/httpd/logrotate.empty:
           file.touch
@@ -3231,7 +3346,7 @@ def copy(name, source, force=False, makedirs=False):
     dname = os.path.dirname(name)
     if not os.path.isdir(dname):
         if makedirs:
-            __salt__['file.makedirs'](dname)
+            __salt__['file.makedirs'](name)
         else:
             return _error(
                 ret,
@@ -3317,7 +3432,7 @@ def rename(name, source, force=False, makedirs=False):
     dname = os.path.dirname(name)
     if not os.path.isdir(dname):
         if makedirs:
-            __salt__['file.makedirs'](dname)
+            __salt__['file.makedirs'](name)
         else:
             return _error(
                 ret,
@@ -3361,7 +3476,9 @@ def accumulated(name, filename, text, **kwargs):
 
     Example:
 
-    Given the following::
+    Given the following:
+
+    .. code-block:: yaml
 
         animals_doing_things:
           file.accumulated:
@@ -3376,11 +3493,15 @@ def accumulated(name, filename, text, **kwargs):
             - source: salt://animal_file.txt
             - template: jinja
 
-    One might write a template for animal_file.txt like the following::
+    One might write a template for ``animal_file.txt`` like the following:
+
+    .. code-block:: jinja
 
         The quick brown fox{% for animal in accumulator['animals_doing_things'] %}{{ animal }}{% endfor %}
 
-    Collectively, the above states and template file will produce::
+    Collectively, the above states and template file will produce:
+
+    .. code-block:: text
 
         The quick brown fox jumps over the lazy dog.
 
@@ -3433,7 +3554,7 @@ def _merge_dict(obj, k, v):
         if type(obj[k]) is list:
             if type(v) is list:
                 for a in v:
-                    if not a in obj[k]:
+                    if a not in obj[k]:
                         changes[k] = a
                         obj[k].append(a)
             else:
@@ -3525,7 +3646,11 @@ def serialize(name,
         be parsed and the dataset passed in will be merged with the existing
         content
 
-    For example, this state::
+        .. versionadded:: Helium
+
+    For example, this state:
+
+    .. code-block:: yaml
 
         /etc/dummy/package.json:
           file.serialize:
@@ -3539,7 +3664,9 @@ def serialize(name,
                 engine: node 0.4.1
             - formatter: json
 
-    will manages the file ``/etc/dummy/package.json``::
+    will manage the file ``/etc/dummy/package.json``:
+
+    .. code-block:: json
 
         {
           "author": "A confused individual <iam@confused.com>",
@@ -3548,8 +3675,8 @@ def serialize(name,
             "optimist": ">= 0.1.0"
           },
           "description": "A package using naive versioning",
-          "engine": "node 0.4.1"
-          "name": "naive",
+          "engine": "node 0.4.1",
+          "name": "naive"
         }
     '''
 
@@ -3562,7 +3689,7 @@ def serialize(name,
         msg = (
             'Passing a salt environment should be done using \'saltenv\' not '
             '\'env\'. This warning will go away in Salt Boron and this '
-            'will be the default and expected behaviour. Please update your '
+            'will be the default and expected behavior. Please update your '
             'state files.'
         )
         salt.utils.warn_until('Boron', msg)
@@ -3581,18 +3708,17 @@ def serialize(name,
     if merge_if_exists:
         if os.path.isfile(name):
             if formatter == 'yaml':
-                existing_data = yaml.load(file(name, 'r'))
+                existing_data = yaml.safe_load(file(name, 'r'))
             elif formatter == 'json':
                 existing_data = json.load(file(name, 'r'))
             else:
                 return {'changes': {},
-                        'comment': '{0} format is not supported for merging'.format(
-                            formatter.capitalized()),
+                        'comment': ('{0} format is not supported for merging'
+                                    .format(formatter.capitalized())),
                         'name': name,
-                        'result': False
-                        }
+                        'result': False}
 
-            if not existing_data is None:
+            if existing_data is not None:
                 for k, v in dataset.iteritems():
                     if k in existing_data:
                         ret['changes'].update(_merge_dict(existing_data, k, v))
@@ -3602,19 +3728,18 @@ def serialize(name,
                 dataset = existing_data
 
     if formatter == 'yaml':
-        contents = yaml.dump(
-            dataset,
-            default_flow_style=False,
-            Dumper=OrderedDumper
-        )
+        contents = yaml_serializer.serialize(dataset,
+                                             default_flow_style=False)
     elif formatter == 'json':
-        contents = json.dumps(dataset,
-                              indent=2,
-                              separators=(',', ': '),
-                              sort_keys=True)
+        contents = json_serializer.serialize(dataset,
+                                             indent=2,
+                                             separators=(',', ': '),
+                                             sort_keys=True)
     elif formatter == 'python':
         # round-trip this through JSON to avoid OrderedDict types
         # there's probably a more performant way to do this...
+        # TODO remove json round-trip when all dataset will use
+        # utils.serializers
         contents = pprint.pformat(
             json.loads(
                 json.dumps(dataset),
@@ -3684,7 +3809,9 @@ def mknod(name, ntype, major=0, minor=0, user=None, group=None, mode='0600'):
     mode
         permissions on the device/pipe
 
-    Usage::
+    Usage:
+
+    .. code-block:: yaml
 
         /dev/chr:
           file.mknod:
@@ -3719,14 +3846,14 @@ def mknod(name, ntype, major=0, minor=0, user=None, group=None, mode='0600'):
            'result': False}
 
     if ntype == 'c':
-        #  check for file existence
+        # Check for file existence
         if __salt__['file.file_exists'](name):
             ret['comment'] = (
                 'File exists and is not a character device {0}. Cowardly '
                 'refusing to continue'.format(name)
             )
 
-        #if it is a character device
+        # Check if it is a character device
         elif not __salt__['file.is_chrdev'](name):
             if __opts__['test']:
                 ret['comment'] = (
@@ -3742,7 +3869,7 @@ def mknod(name, ntype, major=0, minor=0, user=None, group=None, mode='0600'):
                                              group,
                                              mode)
 
-        #  check the major/minor
+        # Check the major/minor
         else:
             devmaj, devmin = __salt__['file.get_devmm'](name)
             if (major, minor) != (devmaj, devmin):
@@ -3751,7 +3878,7 @@ def mknod(name, ntype, major=0, minor=0, user=None, group=None, mode='0600'):
                     'major/minor {1}/{2}. Cowardly refusing to continue'
                     .format(name, devmaj, devmin)
                 )
-            #check the perms
+            # Check the perms
             else:
                 ret = __salt__['file.check_perms'](name,
                                                    None,
@@ -3766,14 +3893,14 @@ def mknod(name, ntype, major=0, minor=0, user=None, group=None, mode='0600'):
                     )
 
     elif ntype == 'b':
-        #  check for file existence
+        # Check for file existence
         if __salt__['file.file_exists'](name):
             ret['comment'] = (
                 'File exists and is not a block device {0}. Cowardly '
                 'refusing to continue'.format(name)
             )
 
-        #  if it is a block device
+        # Check if it is a block device
         elif not __salt__['file.is_blkdev'](name):
             if __opts__['test']:
                 ret['comment'] = (
@@ -3789,7 +3916,7 @@ def mknod(name, ntype, major=0, minor=0, user=None, group=None, mode='0600'):
                                              group,
                                              mode)
 
-        #  check the major/minor
+        # Check the major/minor
         else:
             devmaj, devmin = __salt__['file.get_devmm'](name)
             if (major, minor) != (devmaj, devmin):
@@ -3799,7 +3926,7 @@ def mknod(name, ntype, major=0, minor=0, user=None, group=None, mode='0600'):
                         name, devmaj, devmin
                     )
                 )
-            #  check the perms
+            # Check the perms
             else:
                 ret = __salt__['file.check_perms'](name,
                                                    None,
@@ -3812,14 +3939,14 @@ def mknod(name, ntype, major=0, minor=0, user=None, group=None, mode='0600'):
                     )
 
     elif ntype == 'p':
-        #  check for file existence, if it is a fifo, user, group, and mode
+        # Check for file existence
         if __salt__['file.file_exists'](name):
             ret['comment'] = (
                 'File exists and is not a fifo pipe {0}. Cowardly refusing '
                 'to continue'.format(name)
             )
 
-        #  if it is a fifo
+        # Check if it is a fifo
         elif not __salt__['file.is_fifo'](name):
             if __opts__['test']:
                 ret['comment'] = 'Fifo pipe {0} is set to be created'.format(
@@ -3835,7 +3962,7 @@ def mknod(name, ntype, major=0, minor=0, user=None, group=None, mode='0600'):
                                              group,
                                              mode)
 
-        #  check the perms
+        # Check the perms
         else:
             ret = __salt__['file.check_perms'](name,
                                                None,

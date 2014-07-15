@@ -27,21 +27,48 @@ Merging a QA or staging branch up to a production branch
 can be all that is required to make state and pillar changes available to Salt
 minions.
 
+.. _gitfs-dependencies:
+
+Installing Python Dependencies
+==============================
+
+The GitFS backend requires GitPython_, version 0.3.0 or newer. For RHEL-based
+Linux distros, a compatible versions is available in EPEL, and can be easily
+installed on the master using yum:
+
+.. code-block:: bash
+
+    # yum install GitPython
+
+Ubuntu 14.04 LTS and Debian Wheezy (7.x) also have a compatible version packaged:
+
+.. code-block:: bash
+
+    # apt-get install python-git
+
+If your master is running an older version (such as Ubuntu 12.04 LTS or Debian
+Squeeze), then you will need to install GitPython using either pip_ or
+easy_install (it is recommended to use pip). Version 0.3.2.RC1 is now marked as
+the stable release in PyPI, so it should be a simple matter of running ``pip
+install GitPython`` (or ``easy_install GitPython``) as root.
+
+.. _`pip`: http://www.pip-installer.org/
+
+.. warning::
+
+    Keep in mind that if GitPython has been previously installed on the master
+    using pip (even if it was subsequently uninstalled), then it may still
+    exist in the build cache (typically ``/tmp/pip-build-root/GitPython``) if
+    the cache is not cleared after installation. The package in the build cache
+    will override any requirement specifiers, so if you try upgrading to
+    version 0.3.2.RC1 by running ``pip install 'GitPython==0.3.2.RC1'`` then it
+    will ignore this and simply install the version from the cache directory.
+    Therefore, it may be necessary to delete the GitPython directory from the
+    build cache in order to ensure that the specified version is installed.
+
 
 Simple Configuration
 ====================
-
-.. note::
-
-    GitFS requires ``GitPython`` version 0.3.0 or newer. 
-    If your OS does not have version 0.3.0 or newer
-    (such as Ubuntu 12.04 LTS), you can install ``GitPython`` with `pip`_:
-
-    .. code-block:: bash
-
-        # pip install GitPython
-
-.. _`pip`: http://www.pip-installer.org/
 
 To use the gitfs backend, only two configuration changes are required on the
 master:
@@ -63,11 +90,10 @@ master:
     gitfs_remotes:
       - https://github.com/saltstack-formulas/salt-formula.git
 
-3. *Restart the master* so that the git repository cache on the master
-   is updated, and
-   new ``salt://`` requests will send the latest files from
-   the remote git repository.
-   This step is not necessary with a standalone minion configuration.
+3. Restart the master so that the git repository cache on the master is
+   updated, and new ``salt://`` requests will send the latest files from the
+   remote git repository.  This step is not necessary with a standalone minion
+   configuration.
 
 .. note::
 
@@ -107,7 +133,7 @@ If the ``gitfs_remotes`` option specifies three remotes:
 
 .. warning::
 
-    Salt versions prior to 2014.1.0 (Hydrogen) are not tolerant of changing the
+    Salt versions prior to 2014.1.0 are not tolerant of changing the
     order of remotes or modifying the URI of existing remotes. In those
     versions, when modifying remotes it is a good idea to remove the gitfs
     cache directory (``/var/cache/salt/master/gitfs``) before restarting the
@@ -150,7 +176,9 @@ The :conf_master:`gitfs_root` parameter allows files to be served from a
 subdirectory within the repository. This allows for only part of a repository
 to be exposed to the Salt fileserver.
 
-Assume the below layout::
+Assume the below layout:
+
+.. code-block:: text
 
     .gitignore
     README.txt
@@ -228,7 +256,7 @@ To map a branch other than ``master`` as the ``base`` environment, use the
     gitfs_base: salt-base
 
 
-GitFS Remotes over SSH
+GitFS Remotes Over SSH
 ======================
 
 To configure a ``gitfs_remotes`` repository over SSH transport, use the
@@ -242,6 +270,49 @@ To configure a ``gitfs_remotes`` repository over SSH transport, use the
 The private key used to connect to the repository must be located in
 ``~/.ssh/id_rsa`` for the user running the salt-master.
 
+
+Refreshing GitFS Upon Push
+==========================
+
+By default, Salt updates the remote fileserver backends every 60 seconds.
+However, if it is desirable to refresh quicker than that, the :ref:`Reactor
+System <reactor>` can be used to signal the master to update the fileserver on
+each push, provided that the git server is also a Salt minion. There are three
+steps to this process:
+
+1. Create a file **/srv/reactor/update_fileserver.sls**, with the following
+   contents:
+
+   .. code-block:: yaml
+
+       update_fileserver:
+         runner.fileserver.update
+
+2. Add the following reactor configuration to the master config file:
+
+   .. code-block:: yaml
+
+       reactor:
+         - 'salt/fileserver/gitfs/update':
+           - /srv/reactor/update_fileserver.sls
+
+3. On the git server, add a `post-receive hook`_ with the following contents:
+
+   .. code-block:: bash
+
+       #!/usr/bin/env sh
+
+       salt-call event.fire_master update salt/fileserver/gitfs/update
+
+The "update" argument right after :mod:`event.fire_master
+<salt.modules.event.fire_master>` in this example can really be anything, as it
+represents the data being passed in the event, and the passed data is ignored
+by this reactor.
+
+Similarly, the tag name ``salt/fileserver/gitfs/update`` can be replaced by
+anything, so long as the usage is consistent.
+
+.. _`post-receive hook`: http://www.git-scm.com/book/en/Customizing-Git-Git-Hooks#Server-Side-Hooks
 
 Upcoming Features
 =================

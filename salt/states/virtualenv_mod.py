@@ -61,7 +61,7 @@ def managed(name,
         Pass `--no-deps` to `pip`.
     pip_exists_action: None
         Default action of pip when a path already exists: (s)witch, (i)gnore,
-        (w)wipe, (b)ackup
+        (w)ipe, (b)ackup
     proxy: None
         Proxy address which is passed to "pip install"
 
@@ -76,7 +76,7 @@ def managed(name,
     '''
     ret = {'name': name, 'result': True, 'comment': '', 'changes': {}}
 
-    if not 'virtualenv.create' in __salt__:
+    if 'virtualenv.create' not in __salt__:
         ret['result'] = False
         ret['comment'] = 'Virtualenv was not detected on this system'
         return ret

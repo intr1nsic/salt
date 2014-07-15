@@ -112,7 +112,10 @@ def get_event(node, sock_dir=None, transport='zeromq', opts=None, listen=True):
         return SaltEvent(node, sock_dir, opts)
     elif transport == 'raet':
         import salt.utils.raetevent
-        return salt.utils.raetevent.SaltEvent(node, sock_dir, listen)
+        return salt.utils.raetevent.SaltEvent(node,
+                                              sock_dir=sock_dir,
+                                              listen=listen,
+                                              opts=opts)
 
 
 def tagify(suffix='', prefix='', base=SALT):
@@ -472,6 +475,7 @@ class EventPublisher(Process):
         '''
         Bind the pub and pull sockets for events
         '''
+        salt.utils.appendproctitle(self.__class__.__name__)
         linger = 5000
         # Set up the context
         self.context = zmq.Context(1)
@@ -617,6 +621,7 @@ class Reactor(multiprocessing.Process, salt.state.Compiler):
         '''
         Enter into the server loop
         '''
+        salt.utils.appendproctitle(self.__class__.__name__)
         self.event = SaltEvent('master', self.opts['sock_dir'])
         for data in self.event.iter_events(full=True):
             reactors = self.list_reactors(data['tag'])
@@ -670,7 +675,7 @@ class ReactWrap(object):
         '''
         if 'runner' not in self.client_cache:
             self.client_cache['runner'] = salt.runner.RunnerClient(self.opts)
-        return self.client_cache['runner'].low(fun, kwargs)
+        return self.client_cache['runner'].async(fun, kwargs)
 
     def wheel(self, fun, **kwargs):
         '''

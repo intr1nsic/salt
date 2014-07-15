@@ -632,7 +632,7 @@ lxc
 ---
 
 The lxc driver is a new, experimental driver for installing Salt on
-newly provisionned (via saltcloud) lxc containers. It will in turn use saltify to install
+newly provisioned (via saltcloud) lxc containers. It will in turn use saltify to install
 salt an rattach the lxc container as a new lxc minion.
 As soon as we can, we manage baremetal operation over SSH.
 You can also destroy those containers via this driver.
@@ -700,6 +700,18 @@ current profiles configuration, but, regarding the cloud providers
 configuration, **only** works in the new syntax and respective configuration
 files, i.e. ``/etc/salt/salt/cloud.providers`` or
 ``/etc/salt/cloud.providers.d/*.conf``.
+
+
+.. note::
+
+    Extending cloud profiles and providers is not recursive. For example, a
+    profile that is extended by a second profile is possible, but the second
+    profile cannot be extended by a third profile.
+
+    Also, if a profile (or provider) is extending another profile and each
+    contains a list of values, the lists from the extending profile will
+    override the list from the original profile. The lists are not merged
+    together.
 
 
 Extending Profiles

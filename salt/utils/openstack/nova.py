@@ -113,13 +113,13 @@ class SaltNova(object):
         self.kwargs['auth_url'] = auth_url
         self.kwargs['region_name'] = region_name
         self.kwargs['service_type'] = 'compute'
-        if not os_auth_plugin is None:
+        if os_auth_plugin is not None:
             novaclient.auth_plugin.discover_auth_systems()
             auth_plugin = novaclient.auth_plugin.load_plugin(os_auth_plugin)
             self.kwargs['auth_plugin'] = auth_plugin
             self.kwargs['auth_system'] = os_auth_plugin
 
-        if not 'api_key' in self.kwargs.keys():
+        if 'api_key' not in self.kwargs.keys():
             self.kwargs['api_key'] = password
         extensions = []
         if 'extensions' in kwargs:
@@ -148,17 +148,17 @@ class SaltNova(object):
             self.catalog = \
                 conn.client.service_catalog.catalog['access']['serviceCatalog']
 
-        if not region_name is None:
+        if region_name is not None:
             servers_endpoints = get_entry(self.catalog, 'type', 'compute')['endpoints']
             self.kwargs['bypass_url'] = get_entry(
                 servers_endpoints,
                 'region',
-                region_name.upper()
+                region_name
             )['publicURL']
 
         self.compute_conn = client.Client(**self.kwargs)
 
-        if not region_name is None:
+        if region_name is not None:
             servers_endpoints = get_entry(
                 self.catalog,
                 'type',
@@ -167,7 +167,7 @@ class SaltNova(object):
             self.kwargs['bypass_url'] = get_entry(
                 servers_endpoints,
                 'region',
-                region_name.upper()
+                region_name
             )['publicURL']
 
         self.kwargs['service_type'] = 'volume'
@@ -293,7 +293,8 @@ class SaltNova(object):
 
         return volume
 
-    def volume_create(self, name, size=100, snapshot=None, voltype=None):
+    def volume_create(self, name, size=100, snapshot=None, voltype=None,
+                      availability_zone=None):
         '''
         Create a block device
         '''
@@ -302,7 +303,8 @@ class SaltNova(object):
             size=size,
             display_name=name,
             volume_type=voltype,
-            snapshot_id=snapshot
+            snapshot_id=snapshot,
+            availability_zone=availability_zone
         )
 
         return self._volume_get(response.id)

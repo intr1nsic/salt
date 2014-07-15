@@ -14,7 +14,7 @@ def _mk_client():
     '''
     Create a file client and add it to the context
     '''
-    if not 'cp.fileclient' in __context__:
+    if 'cp.fileclient' not in __context__:
         __context__['cp.fileclient'] = \
             salt.fileclient.get_file_client(__opts__)
 
@@ -121,7 +121,7 @@ def get(key, default=''):
     value = __salt__['pillar.get']('{0}:{1}'.format(pillar_name, key), None)
 
     if value is None:
-        value = salt.utils.traverse_dict(defaults, key, None)
+        value = salt.utils.traverse_dict_and_list(defaults, key, None)
 
     if value is None:
         value = default

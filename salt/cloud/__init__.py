@@ -51,7 +51,7 @@ except ImportError:
 def communicator(func):
     '''Warning, this is a picklable decorator !'''
     def _call(queue, args, kw):
-        '''called with [queue, args, kwargs] as first optionnal arg'''
+        '''called with [queue, args, kwargs] as first optional arg'''
         kw['queue'] = queue
         ret = None
         try:
@@ -110,7 +110,7 @@ def enter_mainloop(target,
 
     mapped_args
         a list of one or more arguments combinations to call the function with
-        eg (foo, [[1], [2]]) will call::
+        e.g. (foo, [[1], [2]]) will call::
 
                 foo([1])
                 foo([2])
@@ -574,8 +574,9 @@ class Cloud(object):
                 # If driver has function list_nodes_min, just replace it
                 # with query param to check existing vms on this driver
                 # for minimum information, Othwise still use query param.
-                if '{0}.list_nodes_min'.format(driver) in self.clouds:
-                    this_query = 'list_nodes_min'
+                if 'selected_query_option' not in opts:
+                    if '{0}.list_nodes_min'.format(driver) in self.clouds:
+                        this_query = 'list_nodes_min'
                 fun = '{0}.{1}'.format(driver, this_query)
                 if fun not in self.clouds:
                     log.error(
@@ -901,7 +902,7 @@ class Cloud(object):
             for obj in output_multip:
                 ret_multip.update(obj)
 
-            # build up a datastructure similar to what the non-parallel
+            # build up a data structure similar to what the non-parallel
             # destroy uses
             for obj in parallel_data:
                 alias = obj['alias']
@@ -1722,7 +1723,7 @@ class Map(Cloud):
                         overrides[setting] = overrides.pop(deprecated)
 
                 # merge minion grains from map file
-                if 'minion' in overrides:
+                if 'minion' in overrides and 'minion' in nodedata:
                     if 'grains' in overrides['minion']:
                         if 'grains' in nodedata['minion']:
                             nodedata['minion']['grains'].update(

@@ -29,7 +29,7 @@ for any OS with a Bourne shell:
 
 .. code-block:: bash
 
-    wget -O - https://raw.githubusercontent.com/saltstack/salt-bootstrap/stable/bootstrap-salt.sh | sudo sh
+    wget -O - https://bootstrap.saltstack.com | sudo sh
 
 See the `salt-bootstrap`_ documentation for other one liners. When using `Vagrant`_
 to test out salt, the `salty-vagrant`_ tool will  provision the VM for you.
@@ -62,7 +62,7 @@ minion are stored.
 The following example walks through the steps necessary to create a state tree that
 ensures that the server has the Apache webserver installed.
 
-.. note:::
+.. note::
     For a complete explanation on Salt States, see the `tutorial
     <http://docs.saltstack.org/en/latest/topics/tutorials/states_pt1.html>`_.
 

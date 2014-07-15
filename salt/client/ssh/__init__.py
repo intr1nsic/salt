@@ -175,7 +175,7 @@ class SSH(object):
         self.opts = opts
         self.tgt_type = self.opts['selected_target_option'] \
                 if self.opts['selected_target_option'] else 'glob'
-        self.roster = salt.roster.Roster(opts)
+        self.roster = salt.roster.Roster(opts, opts.get('roster'))
         self.targets = self.roster.targets(
                 self.opts['tgt'],
                 self.tgt_type)
@@ -360,7 +360,7 @@ class SSH(object):
                     init = True
                     continue
                 for default in self.defaults:
-                    if not default in self.targets[host]:
+                    if default not in self.targets[host]:
                         self.targets[host][default] = self.defaults[default]
                 args = (
                         que,
@@ -749,10 +749,10 @@ class Single(object):
         return stdout, stderr, retcode
 
     def categorize_shim_errors(self, stdout, stderr, retcode):
-        if re.search(RSTR_RE, stdout):
+        if re.search(RSTR_RE, stdout) and stdout != RSTR+'\n':
             # RSTR was found in stdout which means that the shim
             # functioned without *errors* . . . but there may be shim
-            # commands
+            # commands, unless the only thing we found is RSTR
             return None
 
         if re.search(RSTR_RE, stderr):

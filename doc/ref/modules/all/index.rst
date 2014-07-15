@@ -27,6 +27,7 @@ Full list of builtin execution modules
     blockdev
     bluez
     boto_asg
+    boto_elasticache
     boto_elb
     boto_iam
     boto_route53
@@ -155,6 +156,7 @@ Full list of builtin execution modules
     pkgng
     pkgutil
     portage_config
+    postfix
     postgres
     poudriere
     powerpath
@@ -186,6 +188,7 @@ Full list of builtin execution modules
     saltutil
     seed
     selinux
+    serverdensity_device
     service
     shadow
     smartos_imgadm
@@ -206,6 +209,7 @@ Full list of builtin execution modules
     svn
     swift
     sysbench
+    syslog_ng
     sysmod
     system
     systemd
@@ -213,9 +217,11 @@ Full list of builtin execution modules
     timezone
     tls
     tomcat
+    twilio_notify
     upstart
     useradd
     uwsgi
+    varnish
     virt
     virtualenv_mod
     win_autoruns
